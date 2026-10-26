@@ -32,7 +32,7 @@
 2. `Range: bytes=1000-` (open end) and `Range: bytes=0-999999999` (end past EOF) must return 206 with a clamped range; `Range: bytes=999999999-` must return 416. Pinned in Task 12.
 3. Item and show ids must be stable across scans when files did not change, so a playing item is not orphaned by a rescan. Pinned in Task 6 (scanner test "rescan keeps ids").
 4. With no TMDB key, or TMDB unreachable, a scan must finish, items must appear unmatched, and the admin status must show the error text. Pinned in Task 6 (scanner test "tmdb failure leaves show unmatched") and Task 14.
-5. `POST progress` with `duration: 0`, `position > duration`, or negative values must not mark watched, must not throw, and must clamp. Pinned in Task 9.
+5. `POST progress` with `duration: 0` or negative values must not mark watched, must not throw, and must not overwrite a valid resume point; `position > duration` is clamped to `duration` and watched is computed from the clamped value (end-of-file overshoot counts as watched). Pinned in Task 9 and Task 13. (Wording corrected by controller ruling during execution.)
 
 ---
 
