@@ -59,6 +59,15 @@ class PlayerViewModelTest {
     private val progressPosts = ConcurrentLinkedQueue<JsonObject>()
     private var itemBody: () -> MockResponse = { json(itemFixture(progress = """{"position":754.5,"duration":3000,"watched":false}""")) }
 
+    /** Every request as `METHOD /path`, in arrival order. */
+    private val requests = ConcurrentLinkedQueue<String>()
+
+    /** Progress posts for item 5 (the next episode) in arrival order. */
+    private val progressPosts5 = ConcurrentLinkedQueue<JsonObject>()
+    private var settingsBody: () -> MockResponse = { MockResponse().setResponseCode(404) }
+    private var item5DelayMs = 0L
+    private lateinit var settings: SettingsRepo
+
     /** Stands in for the app scope the STOP report runs on; real threads, like the app's. */
     private val exitScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var progressDelayMs = 0L
@@ -73,6 +82,10 @@ class PlayerViewModelTest {
         comingLater = "Coming in a later step",
         subtitlesOff = "Off",
         audioDefault = "Default",
+        nextEpisode = { "Next episode: $it" },
+        previousEpisode = { "Previous episode: $it" },
+        noNextEpisode = "No next episode",
+        noPreviousEpisode = "No previous episode",
     )
 
     @Before fun setUp() {
@@ -81,7 +94,14 @@ class PlayerViewModelTest {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val line = "${request.method} ${request.path}"
+                requests += line
                 return when (line) {
+                    "GET /api/settings" -> settingsBody()
+                    "GET /api/items/5" -> json(item5Fixture).setHeadersDelay(item5DelayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    "POST /api/items/5/progress" -> {
+                        progressPosts5 += Json.parseToJsonElement(request.body.readUtf8()) as JsonObject
+                        json("""{"sessionId":8,"watched":false}""")
+                    }
                     "GET /api/items/4" -> itemBody().setHeadersDelay(itemDelayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
                     "POST /api/items/4/progress" -> {
                         progressPosts += Json.parseToJsonElement(request.body.readUtf8()) as JsonObject
@@ -126,7 +146,7 @@ class PlayerViewModelTest {
 
     private fun TestScope.vm(fromStart: Boolean = false): PlayerViewModel {
         val reporter = ProgressReporter(api, clock = { testScheduler.currentTime })
-        val settings = SettingsRepo(api, ServerStore(NoopDataStore), backgroundScope)
+        settings = SettingsRepo(api, ServerStore(NoopDataStore), backgroundScope)
         val factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
@@ -360,6 +380,168 @@ class PlayerViewModelTest {
         assertEquals(0L, port.seeks.last())
     }
 
+    // Remote mapping (Task 9)
+
+    private suspend fun PlayerViewModel.playingItem(id: Int): UiState.Playing =
+        state.first { it is UiState.Playing && it.detail.item.id == id } as UiState.Playing
+
+    private fun JsonObject.position() = this["position"]!!.jsonPrimitive.double
+
+    @Test fun nextSavesTheOldItemThenPlaysTheNextFromItsSavedPositionInANewSession() = playerTest {
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        port.position = 760_000
+        advanceTimeBy(501) // a first report opens session 7 for item 4
+        awaitRealTime { progressPosts.isNotEmpty() }
+        port.position = 900_000
+
+        vm.next()
+        val s = vm.playingItem(5)
+
+        // The old item's position went out as a SWITCH report, in its session.
+        // (Virtual time may run on while the test waits for HTTP, so more 760 s ticks may precede it.)
+        awaitRealTime { progressPosts.any { it.position() == 900.0 } }
+        val switch = progressPosts.single { it.position() == 900.0 }
+        assertEquals(7, switch["sessionId"]!!.jsonPrimitive.double.toInt())
+
+        // The next one plays from its saved position.
+        assertEquals(listOf("4", "5"), port.prepared.map { it.mediaId })
+        assertEquals(120_000L, port.seeks.last())
+        assertEquals("play", port.calls.last())
+        assertFalse(s.paused)
+        assertFalse(s.overlayVisible)
+        assertEquals("Half Loop", s.detail.item.title)
+        assertEquals(5, vm.currentItemId)
+        assertEquals("Next episode: 2. Half Loop", toaster.current.value)
+
+        // And reports into a new session: the first report for item 5 carries no sessionId.
+        advanceTimeBy(501)
+        awaitRealTime { progressPosts5.isNotEmpty() }
+        assertEquals("from item 5's own position", 120.0, progressPosts5.first().position(), 0.0)
+        assertNull(progressPosts5.first()["sessionId"])
+        assertEquals("item 4 gets nothing more", progressPosts.last(), switch)
+    }
+
+    @Test fun prevGoesBackToThePreviousEpisode() = playerTest {
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        vm.next()
+        vm.playingItem(5)
+        vm.prev()
+        val s = vm.state.first { it is UiState.Playing && it.detail.item.id == 4 && port.prepared.size == 3 } as UiState.Playing
+        assertEquals(listOf("4", "5", "4"), port.prepared.map { it.mediaId })
+        assertEquals(754_500L, port.seeks.last())
+        assertEquals("Previous episode: 1. Good News About Hell", toaster.current.value)
+        assertEquals(4, s.detail.item.id)
+    }
+
+    /** Review Focus 5. */
+    @Test fun rapidNextPressesSwitchOnceAndKeepTheOldPosition() = playerTest {
+        item5DelayMs = 300
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        port.position = 900_000
+        vm.next()
+        vm.next()
+        vm.next()
+        vm.playingItem(5)
+        withContext(Dispatchers.Default) { delay(500) }
+        runCurrent()
+        assertEquals(1, requests.count { it == "GET /api/items/5" })
+        assertTrue(requests.none { it == "GET /api/items/6" })
+        assertEquals(listOf("4", "5"), port.prepared.map { it.mediaId })
+        assertEquals("one SWITCH report, at the position left", listOf(900.0), progressPosts.map { it.position() })
+    }
+
+    @Test fun nextWithoutANextEpisodeOnlyToasts() = playerTest {
+        itemBody = { json(itemFixture(progress = null, next = null)) }
+        val vm = vm()
+        vm.playing() // duration unknown: no tick reports either
+        val calls = port.calls.toList()
+        vm.next()
+        assertEquals("No next episode", toaster.current.value)
+        vm.prev()
+        assertEquals("No previous episode", toaster.current.value)
+        withContext(Dispatchers.Default) { delay(200) }
+        runCurrent()
+        assertEquals(calls, port.calls)
+        assertTrue(progressPosts.isEmpty())
+        assertTrue(vm.state.value is UiState.Playing)
+    }
+
+    @Test fun backDuringASwitchLeavesWithoutStartingTheNextEpisode() = playerTest {
+        item5DelayMs = 300
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        port.position = 900_000
+        vm.next()
+        vm.onAction(PlayerAction.StopAndExit)
+        assertTrue(vm.exitRequested.value)
+        withContext(Dispatchers.Default) { delay(600) }
+        runCurrent()
+        assertEquals(listOf("4"), port.prepared.map { it.mediaId })
+        awaitRealTime { progressPosts.size == 2 }
+        assertEquals("SWITCH then STOP, both for item 4", listOf(900.0, 900.0), progressPosts.map { it.position() })
+    }
+
+    @Test fun skipsUseTheServerSettings() = playerTest {
+        settingsBody = { json("""{"skipBackSeconds":5,"skipForwardSeconds":15,"autoplayNext":true}""") }
+        val vm = vm()
+        vm.playing()
+        awaitRealTime { settings.settings.value.skipForwardSeconds == 15 }
+        port.duration = 3_000_000
+        port.position = 100_000
+        vm.onAction(PlayerAction.SkipForward)
+        assertEquals(115_000L, port.seeks.last())
+        vm.onAction(PlayerAction.SkipBack)
+        assertEquals(110_000L, port.seeks.last())
+        assertTrue(vm.current().overlayVisible)
+    }
+
+    @Test fun skipsDefaultToTenSecondsWithoutServerSettings() = playerTest {
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        port.position = 100_000
+        vm.onAction(PlayerAction.SkipForward)
+        assertEquals(110_000L, port.seeks.last())
+        vm.onAction(PlayerAction.SkipBack)
+        assertEquals(100_000L, port.seeks.last())
+    }
+
+    /** Review Focus 2 (keys half): BACK hides a visible overlay first, then stops and saves the position. */
+    @Test fun backHidesTheOverlayThenStopsAndSaves() = playerTest {
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        port.position = 900_000
+        fun back() = PlayerKeys.map(
+            KeyEventLike(KeyCode.BACK, isDown = true, repeatCount = 0),
+            overlayVisible = vm.current().overlayVisible, focusOnOverlay = true,
+            countdownActive = vm.countdownActive.value,
+        )!!.let(vm::onAction)
+        vm.showOverlay()
+        back()
+        assertFalse(vm.current().overlayVisible)
+        assertFalse(vm.exitRequested.value)
+        back()
+        assertTrue(vm.exitRequested.value)
+        awaitRealTime { progressPosts.any { it.position() == 900.0 } }
+    }
+
+    @Test fun okTogglesPauseAndShowsTheOverlay() = playerTest {
+        val vm = vm()
+        vm.playing()
+        vm.onAction(PlayerAction.TogglePause)
+        assertTrue(vm.current().paused)
+        assertTrue(vm.current().overlayVisible)
+        assertFalse(vm.countdownActive.value)
+    }
+
     @Test fun clearingTheViewModelReleasesThePlayer() = playerTest {
         vm().playing()
         store.clear()
@@ -367,14 +549,26 @@ class PlayerViewModelTest {
     }
 }
 
-private fun itemFixture(progress: String?): String = """
+private const val NEXT_5 =
+    """{"id":5,"type":"episode","category":"tv","title":"Half Loop","showId":3,"showTitle":"Severance","season":1,"episode":2,"addedAt":1}"""
+
+private fun itemFixture(progress: String?, next: String? = NEXT_5): String = """
 {"item":{"id":4,"type":"episode","category":"tv","title":"Good News About Hell","showId":3,"showTitle":"Severance",
  "season":1,"episode":1,"progress":${progress ?: "null"},"addedAt":1},
  "streamUrl":"/api/items/4/stream","fileName":"Severance S01E01.mkv","fileSize":880485,
  "audio":[{"index":1,"codec":"aac","language":"eng","default":true,"channels":2}],
  "subtitles":[],
- "next":{"id":5,"type":"episode","category":"tv","title":"Half Loop","showId":3,"showTitle":"Severance","season":1,"episode":2,"addedAt":1},
+ "next":${next ?: "null"},
  "prev":null}
+""".trimIndent()
+
+private val item5Fixture = """
+{"item":{"id":5,"type":"episode","category":"tv","title":"Half Loop","showId":3,"showTitle":"Severance",
+ "season":1,"episode":2,"progress":{"position":120,"duration":3000,"watched":false},"addedAt":1},
+ "streamUrl":"/api/items/5/stream","fileName":"Severance S01E02.mkv","fileSize":880485,
+ "audio":[],"subtitles":[],
+ "next":{"id":6,"type":"episode","category":"tv","title":"In Perpetuity","showId":3,"showTitle":"Severance","season":1,"episode":3,"addedAt":1},
+ "prev":{"id":4,"type":"episode","category":"tv","title":"Good News About Hell","showId":3,"showTitle":"Severance","season":1,"episode":1,"addedAt":1}}
 """.trimIndent()
 
 /** A preferences store that holds nothing (the player never writes settings). */

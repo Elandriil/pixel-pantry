@@ -65,6 +65,10 @@ class AppContainer(private val app: Application) {
             comingLater = app.getString(R.string.player_coming_later),
             subtitlesOff = app.getString(R.string.player_subtitles_off),
             audioDefault = app.getString(R.string.player_audio_default),
+            nextEpisode = { app.getString(R.string.player_next_episode, it) },
+            previousEpisode = { app.getString(R.string.player_previous_episode, it) },
+            noNextEpisode = app.getString(R.string.player_no_next_episode),
+            noPreviousEpisode = app.getString(R.string.player_no_previous_episode),
         )
     }
     val playbackErrorTexts: PlaybackErrorTexts by lazy {

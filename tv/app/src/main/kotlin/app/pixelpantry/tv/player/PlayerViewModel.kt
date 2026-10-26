@@ -12,6 +12,7 @@ import app.pixelpantry.tv.api.Track
 import app.pixelpantry.tv.player.ProgressReporter.Reason
 import app.pixelpantry.tv.settings.SettingsRepo
 import app.pixelpantry.tv.ui.components.Toaster
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -29,8 +30,8 @@ import kotlinx.coroutines.launch
  */
 class PlayerViewModel(
     private val api: ApiClient,
-    // Skip amounts come from here once the remote mapping lands (Task 9).
-    @Suppress("unused") private val settingsRepo: SettingsRepo,
+    /** Skip amounts; refreshed from the server when the player opens. */
+    private val settingsRepo: SettingsRepo,
     private val reporter: ProgressReporter,
     private val toaster: Toaster,
     private val strings: Strings,
@@ -47,6 +48,11 @@ class PlayerViewModel(
         val comingLater: String,
         val subtitlesOff: String,
         val audioDefault: String,
+        /** Toasts after a switch; the argument is [episodeLabel], e.g. `2. Half Loop`. */
+        val nextEpisode: (String) -> String,
+        val previousEpisode: (String) -> String,
+        val noNextEpisode: String,
+        val noPreviousEpisode: String,
     )
 
     sealed interface UiState {
@@ -81,6 +87,10 @@ class PlayerViewModel(
     private val _exitRequested = MutableStateFlow(false)
     val exitRequested: StateFlow<Boolean> = _exitRequested.asStateFlow()
 
+    /** The end-of-episode countdown (Task 11); BACK cancels it while it runs. Always false until then. */
+    private val _countdownActive = MutableStateFlow(false)
+    val countdownActive: StateFlow<Boolean> = _countdownActive.asStateFlow()
+
     /** The player the screen renders (null in tests). */
     val exoPlayer get() = port.exoPlayer
 
@@ -90,6 +100,13 @@ class PlayerViewModel(
     private var hideJob: Job? = null
     private var reportJob: Job? = null
     private var exiting = false
+
+    /** The item playing now; after a next/previous switch it is no longer the route's [itemId]. */
+    var currentItemId = itemId
+        private set
+
+    /** A next/previous switch is in flight; further presses are ignored until it ends (Review Focus 5). */
+    private var isSwitching = false
 
     private val listener = object : PlayerListener {
         /** Pauses the player makes itself (audio focus lost, headphones out) show and report like the user's. */
@@ -120,6 +137,16 @@ class PlayerViewModel(
     init {
         port.addListener(listener)
         load()
+        // Skip amounts changed on the server (admin page) apply from the next playback; the cache covers offline.
+        viewModelScope.launch {
+            try {
+                settingsRepo.refresh()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Keep the cached settings.
+            }
+        }
     }
 
     private fun load() {
@@ -131,26 +158,102 @@ class PlayerViewModel(
                 return@launch
             }
             if (exiting) return@launch
-            detail = d
-            // Subtitle configurations (sidecars) arrive with Task 10's SubtitlePlan; embedded tracks need none.
-            port.prepare(MediaItem.Builder().setUri(api.resolve(d.streamUrl)).setMediaId(d.item.id.toString()).build())
-            val progress = d.item.progress
-            val startMs = if (fromStart || progress == null || progress.watched) 0L else (progress.position * 1000).toLong()
-            port.seekTo(startMs)
-            port.play()
             reporter.start(itemId)
-            _state.value = UiState.Playing(
-                detail = d,
-                positionMs = startMs,
-                durationMs = port.durationMs,
-                paused = false,
-                overlayVisible = false,
-                buffering = port.playbackState == Player.STATE_BUFFERING,
-                audioLabel = audioLabel(d),
-                subtitleLabel = subtitleLabel(d),
-                subDelayMs = 0,
-            )
-            startTicker()
+            startPlayback(d, fromStart)
+        }
+    }
+
+    /** Prepares [d] and plays it from its saved position (0 when [fromStart] or watched), overlay hidden. */
+    private fun startPlayback(d: ItemDetail, fromStart: Boolean) {
+        currentItemId = d.item.id
+        detail = d
+        // Subtitle configurations (sidecars) arrive with Task 10's SubtitlePlan; embedded tracks need none.
+        port.prepare(MediaItem.Builder().setUri(api.resolve(d.streamUrl)).setMediaId(d.item.id.toString()).build())
+        val progress = d.item.progress
+        val startMs = if (fromStart || progress == null || progress.watched) 0L else (progress.position * 1000).toLong()
+        port.seekTo(startMs)
+        port.play()
+        hideJob?.cancel()
+        _state.value = UiState.Playing(
+            detail = d,
+            positionMs = startMs,
+            durationMs = port.durationMs,
+            paused = false,
+            overlayVisible = false,
+            buffering = port.playbackState == Player.STATE_BUFFERING,
+            audioLabel = audioLabel(d),
+            subtitleLabel = subtitleLabel(d),
+            subDelayMs = 0,
+        )
+        startTicker()
+    }
+
+    /** Dispatches a remote key's action (see [PlayerKeys]). */
+    fun onAction(action: PlayerAction) {
+        when (action) {
+            PlayerAction.TogglePause -> togglePause()
+            PlayerAction.SkipBack -> seekBy(-settingsRepo.settings.value.skipBackSeconds)
+            PlayerAction.SkipForward -> seekBy(settingsRepo.settings.value.skipForwardSeconds)
+            PlayerAction.ShowOverlay, PlayerAction.PassThrough -> showOverlay()
+            PlayerAction.Next -> next()
+            PlayerAction.Prev -> prev()
+            PlayerAction.HideOverlay -> hideOverlay()
+            PlayerAction.StopAndExit -> stopAndExit()
+            PlayerAction.CancelCountdown -> cancelCountdown()
+        }
+    }
+
+    /** CH+ / Next: switches to the next episode at once. */
+    fun next() = switchTo(forward = true)
+
+    /** CH− / Prev: switches to the previous episode at once. */
+    fun prev() = switchTo(forward = false)
+
+    /** Stops the end-of-episode countdown (Task 11). */
+    fun cancelCountdown() {
+        _countdownActive.value = false
+    }
+
+    /**
+     * Saves the position of the item being left (a SWITCH report, sent on [exitScope] with the position taken
+     * now), loads the neighbour and plays it in a new progress session. Presses while a switch is in flight
+     * are ignored, so rapid CH+ can neither overlap loads nor skip past an episode.
+     */
+    private fun switchTo(forward: Boolean) {
+        if (exiting || isSwitching) return
+        val s = _state.value as? UiState.Playing ?: return
+        val target = if (forward) s.detail.next else s.detail.prev
+        if (target == null) {
+            toaster.show(if (forward) strings.noNextEpisode else strings.noPreviousEpisode)
+            return
+        }
+        isSwitching = true
+        tickerJob?.cancel()
+        port.pause()
+        val duration = port.durationMs?.takeIf { it > 0 }
+        val position = port.currentPositionMs
+        val saved = duration?.let { exitScope.launch { reporter.flush(position / 1000.0, it / 1000.0, Reason.SWITCH) } }
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            try {
+                val d = try {
+                    api.item(target.id)
+                } catch (e: ApiException) {
+                    // Stay on the item we have; it is paused with its overlay up.
+                    toaster.show(listOf(strings.playbackFailed, e.message.orEmpty()).joinToString(": "))
+                    startTicker()
+                    return@launch
+                }
+                // The old item's report must take the old item id before the reporter moves on.
+                saved?.join()
+                if (exiting) return@launch
+                reporter.start(d.item.id)
+                startPlayback(d, fromStart = false)
+                val label = episodeLabel(d)
+                toaster.show(if (forward) strings.nextEpisode(label) else strings.previousEpisode(label))
+            } finally {
+                isSwitching = false
+            }
         }
     }
 
@@ -244,7 +347,7 @@ class PlayerViewModel(
         if (!s.paused) togglePause()
     }
 
-    /** Prev / Next / Audio / Subtitles / Sub delay: wired up in later tasks. */
+    /** Audio / Subtitles / Sub delay: wired up in later tasks. */
     fun notYetAvailable() {
         toaster.show(strings.comingLater)
         showOverlay()
@@ -280,6 +383,10 @@ class PlayerViewModel(
 
     private fun subtitleLabel(d: ItemDetail): String =
         d.subtitles.firstOrNull { it.id == d.subtitleChoice }?.label ?: strings.subtitlesOff
+
+    /** `2. Half Loop` for an episode, the title for a movie. */
+    private fun episodeLabel(d: ItemDetail): String =
+        d.item.episode?.let { "$it. ${d.item.title}" } ?: d.item.title
 
     private fun trackLabel(t: Track): String =
         listOfNotNull(t.language?.uppercase(), t.codec).joinToString(" · ")

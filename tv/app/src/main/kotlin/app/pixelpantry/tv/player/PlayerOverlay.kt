@@ -27,11 +27,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -50,7 +45,6 @@ import java.util.Locale
 /** What the overlay asks the player to do. */
 sealed interface OverlayAction {
     data object TogglePause : OverlayAction
-    data class SeekBy(val seconds: Int) : OverlayAction
     data object Prev : OverlayAction
     data object Next : OverlayAction
     data object Audio : OverlayAction
@@ -58,18 +52,19 @@ sealed interface OverlayAction {
     data object SubDelay : OverlayAction
 }
 
-/** Temporary skip for LEFT/RIGHT on the seek bar; Task 9 takes it from the settings. */
-private const val SEEK_BAR_SKIP_SECONDS = 10
-
 /**
  * The bottom control panel: title, end time, seek bar with elapsed / remaining, and the buttons row.
- * [pauseFocus] is attached to the Pause/Play button, which takes focus when the overlay appears.
+ * [pauseFocus] is attached to the Pause/Play button, [seekBarFocus] to the seek bar; the screen decides which
+ * takes focus when the overlay appears. Remote keys on the seek bar (skips, OK) are handled by the screen's key
+ * preview (`PlayerKeys`); [onButtonsFocusChanged] tells it whether a button has focus.
  */
 @Composable
 fun PlayerOverlay(
     state: UiState.Playing,
     onAction: (OverlayAction) -> Unit,
     pauseFocus: FocusRequester,
+    seekBarFocus: FocusRequester,
+    onButtonsFocusChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val item = state.detail.item
@@ -100,7 +95,8 @@ fun PlayerOverlay(
             }
             SeekBar(
                 fraction = state.durationMs?.takeIf { it > 0 }?.let { state.positionMs.toFloat() / it } ?: 0f,
-                onAction = onAction,
+                focus = seekBarFocus,
+                down = pauseFocus,
             )
             Row {
                 Text(formatClock(state.positionMs / 1000.0), style = MaterialTheme.typography.bodyMedium, color = Color.White)
@@ -111,7 +107,11 @@ fun PlayerOverlay(
                     color = Color.White,
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.onFocusChanged { onButtonsFocusChanged(it.hasFocus) },
+            ) {
                 OverlayButton(stringResource(R.string.player_prev), enabled = state.detail.prev != null) {
                     onAction(OverlayAction.Prev)
                 }
@@ -156,25 +156,21 @@ private fun OverlayButton(label: String, modifier: Modifier = Modifier, enabled:
     }
 }
 
-/** Focusable progress bar; LEFT/RIGHT skip, OK toggles pause. The knob grows while focused. */
+/**
+ * Focusable progress bar (LEFT/RIGHT skip, OK toggles pause: see `PlayerKeys`). DOWN goes to [down], the
+ * Pause button. The knob grows while focused.
+ */
 @Composable
-private fun SeekBar(fraction: Float, onAction: (OverlayAction) -> Unit) {
+private fun SeekBar(fraction: Float, focus: FocusRequester, down: FocusRequester) {
     var focused by remember { mutableStateOf(false) }
     val accent = MaterialTheme.colorScheme.primary
     Canvas(
         Modifier
             .fillMaxWidth()
             .height(24.dp)
+            .focusRequester(focus)
+            .focusProperties { this.down = down }
             .onFocusChanged { focused = it.isFocused }
-            .onKeyEvent { e ->
-                if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
-                when (e.key) {
-                    Key.DirectionLeft -> { onAction(OverlayAction.SeekBy(-SEEK_BAR_SKIP_SECONDS)); true }
-                    Key.DirectionRight -> { onAction(OverlayAction.SeekBy(SEEK_BAR_SKIP_SECONDS)); true }
-                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { onAction(OverlayAction.TogglePause); true }
-                    else -> false
-                }
-            }
             .focusable(),
     ) {
         val trackHeight = (if (focused) 6.dp else 4.dp).toPx()

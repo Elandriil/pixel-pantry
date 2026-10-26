@@ -92,6 +92,10 @@
     <string name="player_subtitles">Subtitles: %1$s</string>
     <string name="player_sub_delay">Sub delay: %1$s</string>
     <string name="player_remaining">-%1$s</string>
+    <string name="player_next_episode">Next episode: %1$s</string>
+    <string name="player_previous_episode">Previous episode: %1$s</string>
+    <string name="player_no_next_episode">No next episode</string>
+    <string name="player_no_previous_episode">No previous episode</string>
     <string name="player_error_connection">Lost connection to the server</string>
     <string name="player_error_http">The server answered with an error (HTTP %1$d)</string>
     <string name="player_error_not_found">The file is no longer on the server</string>
