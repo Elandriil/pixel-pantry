@@ -18,19 +18,20 @@ function setup(opts: { root?: string; probe?: (absPath: string) => Promise<Probe
   const tmdb = fakeTmdb();
   const probe = fakeProbe();
   const clock = { t: 1_700_000_000_000 };
+  const log = new Logger(join(tmpDir(), "pantry.log"));
   const scanner = new Scanner({
     repo,
     tmdb: opts.tmdb ?? tmdb,
     probe: opts.probe ?? probe.probe,
     mediaRoot: () => root,
-    log: new Logger(join(tmpDir(), "pantry.log")),
+    log,
     now: () => clock.t,
   });
   const file = (rel: string) => {
     touch(join(root, rel), 10);
     return rel;
   };
-  return { root, repo, tmdb, probe, clock, scanner, file };
+  return { root, repo, tmdb, probe, clock, scanner, file, log };
 }
 
 function tvDetails(id: number, name: string, seasons: [number, number][]): TmdbTvDetails {
@@ -406,6 +407,33 @@ test("an episode TMDB lists later is filled in on the next day's scan", async ()
   const e5 = ctx.repo.getEpisode(show.id, 2, 5)!;
   expect(e5.tmdb_id).toBe(1005);
   expect(e5.title).toBe("Ep title 5");
+});
+
+test("a group that throws is logged and skipped; other groups and hideEmpty still run", async () => {
+  const ctx = setup();
+  const andor = ctx.file("tv/Andor/Season 01/Andor S01E01.mkv");
+  const heat = ctx.file("movies/Heat (1995)/Heat (1995).mkv");
+  await ctx.scanner.scan();
+  const heatItem = ctx.repo.getMovieByKey("movies:heat:1995")!;
+
+  const insertShow = ctx.repo.insertShow.bind(ctx.repo);
+  ctx.repo.insertShow = (s, now) => {
+    if (s.parsed_key === "tv:bad show:") throw new Error("constraint failed");
+    return insertShow(s, now);
+  };
+  ctx.file("tv/Bad Show/Season 01/Bad Show S01E01.mkv");
+  const severanceFile = ctx.file("tv/Severance/Season 01/Severance S01E01.mkv");
+  rmSync(join(ctx.root, heat));
+  ctx.clock.t += 1000;
+  const st = await ctx.scanner.scan();
+
+  expect(st.state).toBe("idle");
+  expect(st.lastError).toBeNull();
+  expect(ctx.repo.getShowByKey("tv:bad show:")).toBeNull();
+  expect(ctx.repo.getFileByPath(severanceFile)!.item_id).not.toBeNull();
+  expect(ctx.repo.getFileByPath(andor)!.item_id).not.toBeNull();
+  expect(ctx.repo.getItem(heatItem.id)!.deleted_at).toBe(ctx.clock.t); // hideEmpty ran
+  expect(ctx.log.recent(50).some((l) => l.includes("scan group failed") && l.includes("tv:bad show:"))).toBe(true);
 });
 
 test("unparseable file still becomes an item under folder title", async () => {

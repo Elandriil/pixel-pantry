@@ -209,8 +209,13 @@ export class Scanner {
       else groups.set(parsed.parsedKey, [{ file, parsed }]);
     }
     for (const [key, files] of groups) {
-      if (files[0]!.parsed.kind === "movie") await this.syncMovie(key, files);
-      else await this.syncShow(key, files);
+      // one bad group (odd data, a repo constraint) must not stop the rest of the library from syncing
+      try {
+        if (files[0]!.parsed.kind === "movie") await this.syncMovie(key, files);
+        else await this.syncShow(key, files);
+      } catch (err) {
+        this.deps.log.error("scan group failed", { key, error: message(err) });
+      }
     }
   }
 
