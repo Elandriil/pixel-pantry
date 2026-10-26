@@ -8,7 +8,11 @@ import { liveFiles } from "./catalog";
 const VIDEO_TYPES: Record<string, string> = {
   ".mkv": "video/x-matroska",
   ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
   ".webm": "video/webm",
+  ".ts": "video/mp2t",
+  ".avi": "video/x-msvideo",
+  ".mov": "video/quicktime",
 };
 const IMAGE_TYPES: Record<string, string> = {
   ".jpg": "image/jpeg",

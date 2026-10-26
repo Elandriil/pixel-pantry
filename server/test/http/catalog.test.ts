@@ -123,6 +123,28 @@ test("show detail orders seasons with Specials last and picks resume", async () 
   expect(after.json.show).toMatchObject({ id: show.showId, title: "Lost", episodeCount: 4, unwatchedCount: 3 });
 });
 
+test("show detail counts the show's live files", async () => {
+  const { deps, app } = setup();
+  const show = seedShow(deps.repo, { title: "Lost", category: "tv", seasons: [[1, 2, 3]] });
+  const [e1, e2] = show.itemIds[0]!;
+  const extra = deps.repo.upsertFile({
+    rel_path: "tv/Lost/S1E1.1080p.mkv", category: "tv", size: 1, mtime: NOW, parsed: null, item_id: null, duration: 1,
+    audio_tracks: null, subtitle_tracks: null, probe_error: null, added_at: NOW, deleted_at: null,
+  });
+  deps.repo.setFileItem(extra, e1!);
+  deps.repo.setFileDeleted(deps.repo.filesForItem(e2!)[0]!.id, NOW);
+  deps.repo.hideEmpty(NOW);
+  expect((await request(app, `/api/shows/${show.showId}`)).json.fileCount).toBe(3);
+});
+
+test("GET /api/info identifies the server, uncached", async () => {
+  const { app } = setup();
+  const r = await request(app, "/api/info");
+  expect(r.status).toBe(200);
+  expect(r.json).toEqual({ name: "Pixel Pantry", version: "1" });
+  expect(r.headers.get("Cache-Control")).toBe("no-store");
+});
+
 test("show detail is 404 for missing or hidden shows", async () => {
   const { deps, app } = setup();
   const show = seedShow(deps.repo, { title: "Lost", category: "tv", seasons: [[1]] });

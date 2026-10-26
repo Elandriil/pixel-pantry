@@ -28,6 +28,20 @@ test("non-loopback callers get 403 on admin routes and the page", async () => {
   }
 });
 
+test("a loopback caller with a non-local Host header gets 403", async () => {
+  const app = buildApp(makeDeps());
+  for (const host of ["evil.example:8765", "192.168.1.5:8765", "localhost.evil.example"]) {
+    const r = await request(app, "/admin/api/status", { headers: { Host: host } }, LOCAL);
+    expect(r.status).toBe(403);
+    expect(r.json).toEqual({ error: "admin is localhost only" });
+  }
+  for (const host of ["localhost", "localhost:8765", "127.0.0.1:8765", "[::1]:8765", "LOCALHOST:1"]) {
+    expect((await request(app, "/admin/api/status", { headers: { Host: host } }, LOCAL)).status).toBe(200);
+  }
+  // no Host header (tests, HTTP/1.0): the request URL's host decides
+  expect((await request(app, "http://evil.example/admin/api/status", undefined, LOCAL)).status).toBe(403);
+});
+
 test("remote address falls back to the Bun server's requestIP", async () => {
   const app = buildApp(makeDeps());
   const server = { requestIP: () => ({ address: "127.0.0.1", family: "IPv4", port: 1 }) };

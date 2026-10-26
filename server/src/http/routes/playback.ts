@@ -5,7 +5,7 @@ import type { FileRow } from "../../library/repo";
 import { listHistory, stats } from "../../playback/history";
 import { reportProgress, setSeasonWatched, setShowWatched, setTrackChoice, setWatched } from "../../playback/progress";
 import { listSidecars } from "../../subtitles/sidecar";
-import type { Settings } from "../../types";
+import type { DeleteResponse, HistoryResponse, ProgressResponse, Settings } from "../../types";
 import { jsonBody } from "../body";
 import type { Deps } from "../deps";
 import { HttpError } from "../errors";
@@ -95,11 +95,10 @@ export function playbackRoutes(deps: Deps): Hono {
       throw new HttpError(400, "position and duration must be numbers");
     }
     if (b.sessionId != null && typeof b.sessionId !== "number") throw new HttpError(400, "sessionId must be a number");
-    return c.json(
-      reportProgress(deps.db, {
-        itemId: item.id, position: b.position, duration: b.duration, sessionId: b.sessionId ?? null, now: deps.now(),
-      }),
-    );
+    const res: ProgressResponse = reportProgress(deps.db, {
+      itemId: item.id, position: b.position, duration: b.duration, sessionId: b.sessionId ?? null, now: deps.now(),
+    });
+    return c.json(res);
   });
 
   r.post("/items/:id/watched", async (c) => {
@@ -132,12 +131,12 @@ export function playbackRoutes(deps: Deps): Hono {
     const raw = c.req.query("limit");
     const limit = raw === undefined ? undefined : Number(raw);
     if (limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0)) throw new HttpError(400, "Invalid limit");
-    const entries = [];
+    const entries: HistoryResponse["entries"] = [];
     for (const e of listHistory(deps.db, limit)) {
       const item = deps.repo.getItem(e.itemId);
       if (item) entries.push({ ...e, item: toItemSummary(deps, item) });
     }
-    return c.json({ entries });
+    return c.json({ entries } satisfies HistoryResponse);
   });
 
   r.get("/stats", (c) => c.json(stats(deps.db, deps.now())));
@@ -163,13 +162,13 @@ export function playbackRoutes(deps: Deps): Hono {
   r.delete("/shows/:id", async (c) => {
     const show = liveShow(deps, parseId(c.req.param("id")));
     const ids = deps.repo.listEpisodes(show.id, { includeDeleted: true }).map((i) => i.id);
-    return c.json({ trashed: await trashFiles(deps, liveFilesOf(deps, ids), true) });
+    return c.json({ trashed: await trashFiles(deps, liveFilesOf(deps, ids), true) } satisfies DeleteResponse);
   });
 
   r.delete("/movies/:id", async (c) => {
     const item = liveItem(deps, parseId(c.req.param("id")));
     if (item.type !== "movie") throw new HttpError(404, "Movie not found");
-    return c.json({ trashed: await trashFiles(deps, liveFilesOf(deps, [item.id]), false) });
+    return c.json({ trashed: await trashFiles(deps, liveFilesOf(deps, [item.id]), false) } satisfies DeleteResponse);
   });
 
   return r;

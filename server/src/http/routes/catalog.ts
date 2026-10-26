@@ -7,7 +7,8 @@ import { imageUrl } from "../../metadata/images";
 import { continueWatching, getPlayback } from "../../playback/progress";
 import { listSidecars, type SidecarTrack } from "../../subtitles/sidecar";
 import type {
-  Card, Category, CategoryPage, ItemDetail, ItemSummary, Row, SeasonDetail, ShowDetail, ShowSummary, SubtitleTrack,
+  Card, Category, CategoryPage, InfoResponse, ItemDetail, ItemSummary, Row, SearchResponse, SeasonDetail, ShowDetail,
+  ShowSummary, SubtitleTrack,
 } from "../../types";
 import type { Deps } from "../deps";
 import { HttpError } from "../errors";
@@ -180,7 +181,13 @@ function showDetail(deps: Deps, show: ShowRow): ShowDetail {
   const all = seasons.flatMap((s) => s.episodes);
   const resume =
     (entry && all.find((e) => e.id === entry.itemId)) || all.find((e) => !e.progress?.watched) || null;
-  return { show: toShowSummary(deps.db, show), seasons, resume };
+  const { fileCount } = deps.db
+    .query(
+      `SELECT COUNT(*) AS fileCount FROM files f JOIN items i ON i.id = f.item_id
+       WHERE i.show_id = ? AND f.deleted_at IS NULL AND i.deleted_at IS NULL`,
+    )
+    .get(show.id) as { fileCount: number };
+  return { show: toShowSummary(deps.db, show), seasons, resume, fileCount };
 }
 
 /** Subtitle tracks embedded in a probed file, in stream order. */
@@ -270,13 +277,16 @@ export function catalogRoutes(deps: Deps): Hono {
 
   r.get("/search", (c) => {
     const q = (c.req.query("q") ?? "").trim();
-    if (!q) return c.json({ shows: [], movies: [] });
+    if (!q) return c.json({ shows: [], movies: [] } satisfies SearchResponse);
     const found = deps.repo.searchTitles(q);
     return c.json({
       shows: found.shows.map((s) => toShowSummary(deps.db, s)),
       movies: found.movies.map((m) => toItemSummary(deps, m, null)),
-    });
+    } satisfies SearchResponse);
   });
+
+  /** Lets a client check that an address really is a Pixel Pantry server. */
+  r.get("/info", (c) => c.json({ name: "Pixel Pantry", version: "1" } satisfies InfoResponse));
 
   return r;
 }

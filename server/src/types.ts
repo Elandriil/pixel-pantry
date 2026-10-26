@@ -1,4 +1,9 @@
 import type { Track } from "./library/probe";
+import type { ScanStatus } from "./library/scanner";
+import type { HistoryEntry, Stats } from "./playback/history";
+import type { OsResult } from "./subtitles/opensubtitles";
+
+export type { HistoryEntry, OsResult, ScanStatus, Stats };
 
 export type Category = 'tv' | 'anime' | 'movies';
 
@@ -11,9 +16,17 @@ export type Card = { kind: 'show'; show: ShowSummary; nextUp?: ItemSummary } | {
 export interface Row { key: 'continue' | 'recent' | 'all'; title: string; cards: Card[] }
 export interface CategoryPage { category: Category | 'home'; rows: Row[] }
 export interface SeasonDetail { number: number; name: string; poster: string | null; episodes: ItemSummary[] }
-export interface ShowDetail { show: ShowSummary; seasons: SeasonDetail[]; resume: ItemSummary | null }
+export interface ShowDetail { show: ShowSummary; seasons: SeasonDetail[]; resume: ItemSummary | null; fileCount: number /* live files, for the delete confirmation */ }
 export interface ItemDetail { item: ItemSummary; streamUrl: string; fileName: string; fileSize: number; audio: Track[]; subtitles: SubtitleTrack[]; next: ItemSummary | null; prev: ItemSummary | null; subtitleChoice: string | null; audioChoice: string | null }
 export interface SubtitleTrack { id: string /* "embedded:3" | "sidecar:<encodeURIComponent(basename)>" */; label: string; lang: string | null; url: string | null /* null for embedded */; format: 'srt' | 'vtt' | 'ass' | 'embedded' }
+// response envelopes
+export interface SearchResponse { shows: ShowSummary[]; movies: ItemSummary[] }
+export interface HistoryResponse { entries: (HistoryEntry & { item: ItemSummary })[] }
+export interface ProgressResponse { sessionId: number; watched: boolean }
+export interface DeleteResponse { trashed: string[] }
+export interface SubtitleListResponse { tracks: SubtitleTrack[] }
+export interface SubtitleSearchResponse { results: OsResult[] }
+export interface InfoResponse { name: 'Pixel Pantry'; version: '1' }
 export interface Settings { skipBackSeconds: number; skipForwardSeconds: number; autoplayNext: boolean }
 
 /** A value fixed at construction or read fresh on every use (e.g. a getter over the live config). */

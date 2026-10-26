@@ -7,6 +7,7 @@ import { openSubtitlesHash } from "../../subtitles/hash";
 import { listSidecars, saveSidecar, type SidecarTrack } from "../../subtitles/sidecar";
 import { decodeSubtitle } from "../../subtitles/decode";
 import { shiftSubtitle } from "../../subtitles/shift";
+import type { SubtitleListResponse, SubtitleSearchResponse } from "../../types";
 import { jsonBody } from "../body";
 import type { Deps } from "../deps";
 import { HttpError } from "../errors";
@@ -55,7 +56,7 @@ export function subtitleRoutes(deps: Deps): Hono {
 
   r.get("/items/:id/subtitles", async (c) => {
     const { item, file } = video(c.req.param("id"));
-    return c.json({ tracks: await subtitleTracks(deps, item.id, file) });
+    return c.json({ tracks: await subtitleTracks(deps, item.id, file) } satisfies SubtitleListResponse);
   });
 
   r.get("/items/:id/subtitles/sidecar/:name", async (c) => {
@@ -83,7 +84,7 @@ export function subtitleRoutes(deps: Deps): Hono {
       deps.log.warn("subtitle hash failed", { path: abs, error: message(err) });
     }
     const results = await upstream(deps, "search", () => deps.os.search({ ...searchQuery(item), hash }));
-    return c.json({ results });
+    return c.json({ results } satisfies SubtitleSearchResponse);
   });
 
   r.post("/items/:id/subtitles/download", async (c) => {

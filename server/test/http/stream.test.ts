@@ -40,7 +40,11 @@ describe("GET /api/items/:id/stream", () => {
   });
 
   test("Content-Type by extension", async () => {
-    for (const [ext, type] of [["mp4", "video/mp4"], ["webm", "video/webm"], ["avi", "application/octet-stream"]]) {
+    const types = [
+      ["mp4", "video/mp4"], ["m4v", "video/mp4"], ["webm", "video/webm"], ["ts", "video/mp2t"],
+      ["avi", "video/x-msvideo"], ["mov", "video/quicktime"], ["wmv", "application/octet-stream"],
+    ];
+    for (const [ext, type] of types) {
       const { app, id } = setup(ext);
       expect((await get(app, id)).headers.get("Content-Type")).toBe(type!);
     }

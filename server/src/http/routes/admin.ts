@@ -21,10 +21,17 @@ export interface AdminEnv {
 }
 type Env = { Bindings: AdminEnv | undefined };
 
-/** Only the socket address counts: proxies' X-Forwarded-For is never trusted. */
+/** `localhost`, `127.0.0.1` or `[::1]`, with an optional port. */
+const LOCAL_HOST = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i;
+
+/**
+ * Only the socket address counts: proxies' X-Forwarded-For is never trusted. The Host header must name the
+ * loopback too, so a web page on a rebinding domain that resolves to 127.0.0.1 cannot drive the admin API.
+ */
 const loopbackOnly: MiddlewareHandler<Env> = async (c, next) => {
   const addr = c.env?.remoteAddr ?? c.env?.server?.requestIP(c.req.raw)?.address;
-  if (!addr || !LOOPBACK.has(addr)) return c.json({ error: "admin is localhost only" }, 403);
+  const host = c.req.header("Host") ?? new URL(c.req.url).host;
+  if (!addr || !LOOPBACK.has(addr) || !LOCAL_HOST.test(host)) return c.json({ error: "admin is localhost only" }, 403);
   await next();
 };
 

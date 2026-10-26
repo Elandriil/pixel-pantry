@@ -69,7 +69,7 @@ async function quit(): Promise<void> {
   quitting = true;
   log.info("shutting down");
   try {
-    await watcher?.close().catch(() => {});
+    await Promise.race([watcher?.close().catch(() => {}), Bun.sleep(1000)]);
     await Promise.race([discovery.stop(), Bun.sleep(1000)]);
     tray?.stop();
     server.stop(true);
