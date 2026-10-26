@@ -192,6 +192,8 @@ class PlayerViewModel(
     fun onAction(action: PlayerAction) {
         when (action) {
             PlayerAction.TogglePause -> togglePause()
+            PlayerAction.Play -> play()
+            PlayerAction.Pause -> pause()
             PlayerAction.SkipBack -> seekBy(-settingsRepo.settings.value.skipBackSeconds)
             PlayerAction.SkipForward -> seekBy(settingsRepo.settings.value.skipForwardSeconds)
             PlayerAction.ShowOverlay, PlayerAction.PassThrough -> showOverlay()
@@ -230,9 +232,10 @@ class PlayerViewModel(
         isSwitching = true
         tickerJob?.cancel()
         port.pause()
-        val duration = port.durationMs?.takeIf { it > 0 }
+        // Sent even while the duration is unknown (as 0): the server ignores the duration then but keeps the session.
+        val duration = port.durationMs?.takeIf { it > 0 } ?: 0L
         val position = port.currentPositionMs
-        val saved = duration?.let { exitScope.launch { reporter.flush(position / 1000.0, it / 1000.0, Reason.SWITCH) } }
+        val saved = exitScope.launch { reporter.flush(position / 1000.0, duration / 1000.0, Reason.SWITCH) }
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             try {
@@ -245,7 +248,7 @@ class PlayerViewModel(
                     return@launch
                 }
                 // The old item's report must take the old item id before the reporter moves on.
-                saved?.join()
+                saved.join()
                 if (exiting) return@launch
                 reporter.start(d.item.id)
                 startPlayback(d, fromStart = false)
@@ -276,16 +279,33 @@ class PlayerViewModel(
     /** OK / Play-Pause: toggles and shows the overlay; pausing reports progress at once. */
     fun togglePause() {
         val s = _state.value as? UiState.Playing ?: return
+        if (s.paused) play() else pause()
+    }
+
+    /**
+     * ▶: resumes and shows the overlay (its hide timer starts again); already playing, only shows it. Ignored
+     * while a next/previous switch is in flight (the item being left is paused and its position reported).
+     */
+    fun play() {
+        val s = _state.value as? UiState.Playing ?: return
+        if (isSwitching) return
         if (s.paused) {
             port.play()
             updatePlaying { it.copy(paused = false) }
-            showOverlay()
-        } else {
+        }
+        showOverlay()
+    }
+
+    /** ‖: pauses, shows the overlay and reports progress once; already paused, only shows it. */
+    fun pause() {
+        val s = _state.value as? UiState.Playing ?: return
+        if (isSwitching) return
+        if (!s.paused) {
             port.pause()
             updatePlaying { it.copy(paused = true, positionMs = port.currentPositionMs) }
-            showOverlay()
             flush(Reason.PAUSE)
         }
+        showOverlay()
     }
 
     /** Skips by [seconds] (negative = back), clamped to the item, and shows the overlay. */
@@ -295,7 +315,7 @@ class PlayerViewModel(
     }
 
     fun seekTo(ms: Long) {
-        if (_state.value !is UiState.Playing) return
+        if (_state.value !is UiState.Playing || isSwitching) return
         val max = port.durationMs ?: Long.MAX_VALUE
         val target = ms.coerceIn(0, max)
         port.seekTo(target)

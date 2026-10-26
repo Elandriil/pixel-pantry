@@ -14,6 +14,12 @@ data class KeyEventLike(val code: KeyCode, val isDown: Boolean, val repeatCount:
 /** What a key asks the player to do. */
 sealed class PlayerAction {
     data object TogglePause : PlayerAction()
+
+    /** The remote's own ▶ key: resumes, or only shows the overlay when already playing. */
+    data object Play : PlayerAction()
+
+    /** The remote's own ‖ key: pauses, or only shows the overlay when already paused. */
+    data object Pause : PlayerAction()
     data object SkipBack : PlayerAction()
     data object SkipForward : PlayerAction()
     data object ShowOverlay : PlayerAction()
@@ -41,7 +47,9 @@ object PlayerKeys {
         val action = when (key.code) {
             KeyCode.CHANNEL_UP, KeyCode.MEDIA_NEXT -> PlayerAction.Next
             KeyCode.CHANNEL_DOWN, KeyCode.MEDIA_PREVIOUS -> PlayerAction.Prev
-            KeyCode.MEDIA_PLAY_PAUSE, KeyCode.MEDIA_PLAY, KeyCode.MEDIA_PAUSE -> PlayerAction.TogglePause
+            KeyCode.MEDIA_PLAY_PAUSE -> PlayerAction.TogglePause
+            KeyCode.MEDIA_PLAY -> PlayerAction.Play
+            KeyCode.MEDIA_PAUSE -> PlayerAction.Pause
             KeyCode.BACK -> when {
                 countdownActive -> PlayerAction.CancelCountdown
                 overlayVisible -> PlayerAction.HideOverlay

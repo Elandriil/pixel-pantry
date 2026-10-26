@@ -49,9 +49,22 @@ class PlayerKeysTest {
     }
 
     @Test fun hiddenOkEnterAndPlayPauseTogglePause() {
-        for (code in listOf(DPAD_CENTER, ENTER, MEDIA_PLAY_PAUSE, MEDIA_PLAY, MEDIA_PAUSE)) {
+        for (code in listOf(DPAD_CENTER, ENTER, MEDIA_PLAY_PAUSE)) {
             assertEquals(code.name, PlayerAction.TogglePause, hidden(down(code)))
         }
+    }
+
+    /** A remote with separate ▶ and ‖ keys: they never toggle, whatever the state (Play/Pause are idempotent in the VM). */
+    @Test fun separatePlayKeyPlaysInEveryState() {
+        assertEquals(PlayerAction.Play, hidden(down(MEDIA_PLAY)))
+        assertEquals(PlayerAction.Play, onSeekBar(down(MEDIA_PLAY)))
+        assertEquals(PlayerAction.Play, onButton(down(MEDIA_PLAY)))
+    }
+
+    @Test fun separatePauseKeyPausesInEveryState() {
+        assertEquals(PlayerAction.Pause, hidden(down(MEDIA_PAUSE)))
+        assertEquals(PlayerAction.Pause, onSeekBar(down(MEDIA_PAUSE)))
+        assertEquals(PlayerAction.Pause, onButton(down(MEDIA_PAUSE)))
     }
 
     // Overlay visible

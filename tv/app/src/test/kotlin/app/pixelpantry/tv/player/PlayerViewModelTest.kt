@@ -66,6 +66,7 @@ class PlayerViewModelTest {
     private val progressPosts5 = ConcurrentLinkedQueue<JsonObject>()
     private var settingsBody: () -> MockResponse = { MockResponse().setResponseCode(404) }
     private var item5DelayMs = 0L
+    private var item5Body: () -> MockResponse = { json(item5Fixture()) }
     private lateinit var settings: SettingsRepo
 
     /** Stands in for the app scope the STOP report runs on; real threads, like the app's. */
@@ -97,7 +98,7 @@ class PlayerViewModelTest {
                 requests += line
                 return when (line) {
                     "GET /api/settings" -> settingsBody()
-                    "GET /api/items/5" -> json(item5Fixture).setHeadersDelay(item5DelayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    "GET /api/items/5" -> item5Body().setHeadersDelay(item5DelayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
                     "POST /api/items/5/progress" -> {
                         progressPosts5 += Json.parseToJsonElement(request.body.readUtf8()) as JsonObject
                         json("""{"sessionId":8,"watched":false}""")
@@ -542,6 +543,124 @@ class PlayerViewModelTest {
         assertFalse(vm.countdownActive.value)
     }
 
+    // Review round 1
+
+    @Test fun playKeyResumesWhenPausedAndOnlyShowsTheOverlayWhenPlaying() = playerTest {
+        val vm = vm()
+        vm.playing()
+        val before = port.calls.size
+        vm.onAction(PlayerAction.Play) // already playing
+        assertEquals("no player call", before, port.calls.size)
+        assertFalse(vm.current().paused)
+        assertTrue(vm.current().overlayVisible)
+        advanceTimeBy(4_001)
+        assertFalse("hide timer runs while playing", vm.current().overlayVisible)
+
+        vm.onAction(PlayerAction.Pause)
+        vm.onAction(PlayerAction.Play) // paused: resumes and restarts the hide timer
+        assertEquals("play", port.calls.last())
+        assertFalse(vm.current().paused)
+        advanceTimeBy(3_999)
+        assertTrue(vm.current().overlayVisible)
+        advanceTimeBy(2)
+        assertFalse(vm.current().overlayVisible)
+    }
+
+    @Test fun pauseKeyPausesOnceAndIsANoOpWhenPaused() = playerTest {
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        port.position = 800_000
+        vm.onAction(PlayerAction.Pause)
+        assertEquals("pause", port.calls.last())
+        assertTrue(vm.current().paused)
+        assertTrue(vm.current().overlayVisible)
+        val calls = port.calls.size
+        vm.onAction(PlayerAction.Pause) // already paused: never resumes
+        assertEquals(calls, port.calls.size)
+        assertTrue(vm.current().paused)
+        awaitRealTime { progressPosts.isNotEmpty() }
+        withContext(Dispatchers.Default) { delay(300) }
+        assertEquals("one PAUSE report", listOf(800.0), progressPosts.map { it.position() })
+    }
+
+    @Test fun playbackKeysAreIgnoredWhileSwitching() = playerTest {
+        item5DelayMs = 300
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        port.position = 900_000
+        vm.next()
+        val calls = port.calls.toList()
+        vm.onAction(PlayerAction.TogglePause)
+        vm.onAction(PlayerAction.Play)
+        vm.onAction(PlayerAction.Pause)
+        vm.onAction(PlayerAction.SkipForward)
+        vm.onAction(PlayerAction.SkipBack)
+        vm.seekTo(10_000)
+        assertEquals("the item being left stays paused where it was", calls, port.calls)
+        vm.playingItem(5)
+        assertEquals(listOf("4", "5"), port.prepared.map { it.mediaId })
+    }
+
+    @Test fun switchWithUnknownDurationStillReportsThePosition() = playerTest {
+        val vm = vm()
+        vm.playing()
+        port.duration = null
+        port.position = 42_000
+        vm.next()
+        vm.playingItem(5)
+        awaitRealTime { progressPosts.isNotEmpty() }
+        val switch = progressPosts.single()
+        assertEquals(42.0, switch.position(), 0.0)
+        assertEquals(0.0, switch["duration"]!!.jsonPrimitive.double, 0.0)
+    }
+
+    @Test fun aFailedSwitchStaysOnTheOldItemAndCanSwitchAgain() = playerTest {
+        item5Body = { MockResponse().setResponseCode(500).setBody("""{"error":"Database is locked"}""") }
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        port.position = 900_000
+        vm.next()
+        awaitRealTime { toaster.current.value?.startsWith("Playback failed") == true }
+        runCurrent()
+        assertEquals(4, vm.currentItemId)
+        assertEquals(listOf("4"), port.prepared.map { it.mediaId })
+        assertEquals(4, vm.current().detail.item.id)
+
+        vm.togglePause() // the old item resumes
+        assertEquals("play", port.calls.last())
+        assertFalse(vm.current().paused)
+
+        item5Body = { json(item5Fixture()) }
+        vm.next() // the switch flag was cleared
+        vm.playingItem(5)
+        assertEquals(2, requests.count { it == "GET /api/items/5" })
+    }
+
+    @Test fun switchToAWatchedEpisodeStartsAtZero() = playerTest {
+        item5Body = { json(item5Fixture(watched = true)) }
+        val vm = vm()
+        vm.playing()
+        vm.next()
+        vm.playingItem(5)
+        assertEquals(0L, port.seeks.last())
+    }
+
+    @Test fun backAfterASwitchStopsTheNewItem() = playerTest {
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        vm.next()
+        vm.playingItem(5)
+        port.position = 200_000
+        vm.onAction(PlayerAction.StopAndExit)
+        assertTrue(vm.exitRequested.value)
+        awaitRealTime { progressPosts5.any { it.position() == 200.0 } }
+        assertTrue("nothing at the new position for the old item", progressPosts.none { it.position() == 200.0 })
+    }
+
     @Test fun clearingTheViewModelReleasesThePlayer() = playerTest {
         vm().playing()
         store.clear()
@@ -562,9 +681,9 @@ private fun itemFixture(progress: String?, next: String? = NEXT_5): String = """
  "prev":null}
 """.trimIndent()
 
-private val item5Fixture = """
+private fun item5Fixture(watched: Boolean = false) = """
 {"item":{"id":5,"type":"episode","category":"tv","title":"Half Loop","showId":3,"showTitle":"Severance",
- "season":1,"episode":2,"progress":{"position":120,"duration":3000,"watched":false},"addedAt":1},
+ "season":1,"episode":2,"progress":{"position":120,"duration":3000,"watched":$watched},"addedAt":1},
  "streamUrl":"/api/items/5/stream","fileName":"Severance S01E02.mkv","fileSize":880485,
  "audio":[],"subtitles":[],
  "next":{"id":6,"type":"episode","category":"tv","title":"In Perpetuity","showId":3,"showTitle":"Severance","season":1,"episode":3,"addedAt":1},
