@@ -42,30 +42,40 @@ export function reportProgress(
   args: { itemId: number; position: number; duration: number; sessionId?: number | null; now: number },
 ): { sessionId: number; watched: boolean } {
   const { itemId, now } = args;
-  const duration = Math.max(args.duration, 0);
-  const position = clamp(args.position, 0, duration);
+  // A report without a usable duration (0, negative, NaN, ±Infinity) or position carries no progress:
+  // keep the stored position/duration, but still log the session and bump last_played_at.
+  const valid = Number.isFinite(args.position) && Number.isFinite(args.duration) && args.duration > 0;
   return db.transaction(() => {
     ensurePlayback(db, itemId);
     const prev = getPlayback(db, itemId)!;
-    const watched = prev.watched === 1 || (duration > 0 && position / duration >= WATCHED_RATIO);
-    db.run(
-      "UPDATE playback SET position = ?, duration = ?, watched = ?, last_played_at = ? WHERE item_id = ?",
-      [position, duration, watched ? 1 : 0, now, itemId],
-    );
+    let position = prev.position;
+    let watched = prev.watched === 1;
+    if (valid) {
+      const duration = args.duration;
+      position = clamp(args.position, 0, duration);
+      watched ||= position / duration >= WATCHED_RATIO;
+      db.run(
+        "UPDATE playback SET position = ?, duration = ?, watched = ?, last_played_at = ? WHERE item_id = ?",
+        [position, duration, watched ? 1 : 0, now, itemId],
+      );
+    } else {
+      db.run("UPDATE playback SET last_played_at = ? WHERE item_id = ?", [now, itemId]);
+    }
 
+    // A session id from another item (e.g. stale after autoplay moved on) counts as not found.
     const session =
       args.sessionId == null
         ? null
-        : (db.query("SELECT id, last_position FROM sessions WHERE id = ?").get(args.sessionId) as
+        : (db.query("SELECT id, last_position FROM sessions WHERE id = ? AND item_id = ?").get(args.sessionId, itemId) as
             | { id: number; last_position: number }
             | null);
     let sessionId: number;
     if (session) {
       sessionId = session.id;
-      const delta = clamp(position - session.last_position, 0, MAX_SECONDS_PER_REPORT);
+      const delta = valid ? clamp(position - session.last_position, 0, MAX_SECONDS_PER_REPORT) : 0;
       db.run(
         "UPDATE sessions SET seconds_watched = seconds_watched + ?, last_position = ?, ended_at = ? WHERE id = ?",
-        [delta, position, now, sessionId],
+        [delta, valid ? position : session.last_position, now, sessionId],
       );
     } else {
       const r = db.run(
@@ -95,8 +105,8 @@ export function setWatched(db: Database, itemId: number, watched: boolean, now: 
 }
 
 function setManyWatched(db: Database, sql: string, params: number[], watched: boolean, now: number): void {
-  const ids = (db.query(sql).all(...params) as { id: number }[]).map((r) => r.id);
   db.transaction(() => {
+    const ids = (db.query(sql).all(...params) as { id: number }[]).map((r) => r.id);
     for (const id of ids) setWatched(db, id, watched, now);
   })();
 }

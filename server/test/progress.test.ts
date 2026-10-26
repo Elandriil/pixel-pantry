@@ -37,9 +37,48 @@ test("duration 0 never sets watched and does not throw", () => {
   const id = seedMovie(repo, "Heat");
   const r = reportProgress(db, { itemId: id, position: 50, duration: 0, now: T0 });
   expect(r.watched).toBe(false);
-  const p = getPlayback(db, id)!;
-  expect(p.duration).toBe(0);
-  expect(p.position).toBe(0);
+  expect(getPlayback(db, id)).toMatchObject({ position: 0, duration: null, watched: 0, last_played_at: T0 });
+});
+
+test("a duration-0 report after real progress keeps position and duration and the resume entry", () => {
+  const { db, repo } = setup();
+  const id = seedMovie(repo, "Heat");
+  const { sessionId } = reportProgress(db, { itemId: id, position: 3000, duration: 7000, now: T0 });
+  const r = reportProgress(db, { itemId: id, position: 0, duration: 0, sessionId, now: T0 + 10_000 });
+  expect(r).toEqual({ sessionId, watched: false });
+  expect(getPlayback(db, id)).toMatchObject({ position: 3000, duration: 7000, last_played_at: T0 + 10_000 });
+  expect(sessionSeconds(db, sessionId)).toBe(0);
+  expect(continueWatching(db, null)).toEqual([{ itemId: id, reason: "resume", lastPlayedAt: T0 + 10_000 }]);
+});
+
+test("a NaN position writes no NULL or NaN anywhere", () => {
+  const { db, repo } = setup();
+  const id = seedMovie(repo, "Heat");
+  const { sessionId } = reportProgress(db, { itemId: id, position: 600, duration: 7000, now: T0 });
+  reportProgress(db, { itemId: id, position: NaN, duration: 7000, sessionId, now: T0 + 10_000 });
+  const fresh = reportProgress(db, { itemId: id, position: NaN, duration: NaN, now: T0 + 20_000 });
+  expect(getPlayback(db, id)).toMatchObject({ position: 600, duration: 7000, watched: 0 });
+  for (const sid of [sessionId, fresh.sessionId]) {
+    const s = db.query("SELECT last_position, seconds_watched FROM sessions WHERE id = ?").get(sid) as {
+      last_position: number | null;
+      seconds_watched: number | null;
+    };
+    expect(s).toEqual({ last_position: 600, seconds_watched: 0 });
+  }
+});
+
+test("a session id that belongs to another item starts a new session", () => {
+  const { db, repo } = setup();
+  const { itemIds } = seedShow(repo, { title: "Severance", category: "tv", seasons: [[1, 2]] });
+  const [e1, e2] = [itemIds[0]![0]!, itemIds[0]![1]!];
+  const first = reportProgress(db, { itemId: e1, position: 1190, duration: 1200, now: T0 });
+  reportProgress(db, { itemId: e1, position: 1200, duration: 1200, sessionId: first.sessionId, now: T0 + 10_000 });
+  // autoplay moved to E2 but the client still sends E1's session id
+  const second = reportProgress(db, { itemId: e2, position: 5, duration: 1200, sessionId: first.sessionId, now: T0 + 20_000 });
+  expect(second.sessionId).not.toBe(first.sessionId);
+  expect(sessionSeconds(db, first.sessionId)).toBe(10);
+  const s = db.query("SELECT item_id, last_position FROM sessions WHERE id = ?").get(second.sessionId);
+  expect(s).toEqual({ item_id: e2, last_position: 5 });
 });
 
 test("position beyond duration clamps to duration and sets watched", () => {
