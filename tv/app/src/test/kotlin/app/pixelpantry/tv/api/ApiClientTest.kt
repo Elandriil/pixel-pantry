@@ -1,5 +1,6 @@
 package app.pixelpantry.tv.api
 
+import app.pixelpantry.tv.ui.components.isUnreachable
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -129,6 +130,18 @@ class ApiClientTest {
         } catch (e: ApiException) {
             assertEquals(0, e.status)
             assertTrue(e.message!!.contains(client.baseUrl))
+        }
+    }
+
+    @Test fun anUnparsableAnswerIsAnUnexpectedResponseNotUnreachable() = runTest {
+        reply("<html>Router login</html>")
+        try {
+            client.info()
+            fail("expected ApiException")
+        } catch (e: ApiException) {
+            assertEquals(-1, e.status)
+            assertEquals("Unexpected response from ${client.baseUrl}", e.message)
+            assertFalse(e.isUnreachable())
         }
     }
 

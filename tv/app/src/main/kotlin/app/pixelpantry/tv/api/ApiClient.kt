@@ -125,7 +125,8 @@ class ApiClient(private val http: OkHttpClient, private val json: Json) {
         } catch (e: IOException) {
             throw ApiException(0, "Cannot reach $base")
         } catch (e: kotlinx.serialization.SerializationException) {
-            throw ApiException(0, "Unexpected response from $base")
+            // Something answered, so not "unreachable" (status 0): an error page, another service on the port.
+            throw ApiException(-1, "Unexpected response from $base")
         }
     }
 
