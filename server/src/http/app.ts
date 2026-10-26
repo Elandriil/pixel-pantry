@@ -1,14 +1,9 @@
 import { Hono } from "hono";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { Deps } from "./deps";
+import { HttpError } from "./errors";
 import { catalogRoutes } from "./routes/catalog";
 
-/** Thrown by route handlers for expected client errors (400, 404, ...). */
-export class HttpError extends Error {
-  constructor(readonly status: ContentfulStatusCode, message: string) {
-    super(message);
-  }
-}
+export { HttpError };
 
 /**
  * Route modules mounted under `/api`. Later tasks add theirs here:

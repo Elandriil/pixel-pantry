@@ -8,8 +8,8 @@ import { continueWatching, getPlayback } from "../../playback/progress";
 import type {
   Card, Category, CategoryPage, ItemDetail, ItemSummary, Row, SeasonDetail, ShowDetail, ShowSummary, SubtitleTrack,
 } from "../../types";
-import { HttpError } from "../app";
 import type { Deps } from "../deps";
+import { HttpError } from "../errors";
 
 const CATEGORIES: readonly Category[] = ["tv", "anime", "movies"];
 const RECENT_LIMIT = 30;
@@ -34,7 +34,7 @@ function episodeOrder(a: ItemRow, b: ItemRow): number {
 }
 
 /** Live files of an item, newest first (added_at, then id). */
-function liveFiles(files: FileRow[]): FileRow[] {
+export function liveFiles(files: FileRow[]): FileRow[] {
   return files
     .filter((f) => f.deleted_at === null)
     .sort((a, b) => (b.added_at ?? 0) - (a.added_at ?? 0) || b.id - a.id);
