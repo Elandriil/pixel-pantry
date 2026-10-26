@@ -74,22 +74,29 @@ class HomeViewModel(
     val deleteConfirm: StateFlow<DeleteConfirm?> = _deleteConfirm.asStateFlow()
 
     private var loadJob: Job? = null
+
+    /** The reload after a scan; a later [load] (e.g. on resume) runs beside it and never cancels it. */
+    private var scanReloadJob: Job? = null
     private var resumedBefore = false
 
     init {
         load()
-        viewModelScope.launch { scanner.scanFinished.collect { outcome -> load(toastOnSuccess = outcome) } }
+        viewModelScope.launch { scanner.scanFinished.collect(::reloadAfterScan) }
     }
 
-    /**
-     * Fetches the page. Shows [UiState.Loading] unless a page is already on screen (then refreshes in place).
-     * [toastOnSuccess] is shown once the page loaded.
-     */
-    fun load(toastOnSuccess: String? = null) {
+    /** Fetches the page. Shows [UiState.Loading] unless a page is already on screen (then refreshes in place). */
+    fun load() {
         loadJob?.cancel()
         if (_state.value !is UiState.Loaded) _state.value = UiState.Loading
-        loadJob = viewModelScope.launch {
-            if (fetch()) toastOnSuccess?.let(toaster::show)
+        loadJob = viewModelScope.launch { fetch() }
+    }
+
+    /** A scan finished: reload, and toast its [outcome] once that reload went through (a newer scan replaces it). */
+    private fun reloadAfterScan(outcome: String) {
+        scanReloadJob?.cancel()
+        if (_state.value !is UiState.Loaded) _state.value = UiState.Loading
+        scanReloadJob = viewModelScope.launch {
+            if (fetch()) toaster.show(outcome)
         }
     }
 

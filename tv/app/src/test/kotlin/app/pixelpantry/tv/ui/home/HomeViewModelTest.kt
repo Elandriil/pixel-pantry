@@ -285,6 +285,20 @@ class HomeViewModelTest {
         assertEquals(listOf("Scanning…", "Library updated"), toasts.toList())
     }
 
+    @Test fun aResumeDuringTheScanReloadKeepsItsToast() = runTest {
+        val scanner = scanner()
+        val vm = newVm(scanner = scanner)
+        vm.loaded()
+        vm.onResume() // the first resume is the initial load
+        homeBody = { json(homeFixture).setHeadersDelay(300, java.util.concurrent.TimeUnit.MILLISECONDS) }
+        scanner.rescan()
+        awaitRealTime { homeLoads.get() == 2 } // the scan's reload is in flight
+        vm.onResume()
+        awaitRealTime { "Library updated" in toasts }
+        assertEquals(3, homeLoads.get())
+        settle() // the resume's reload is still answering
+    }
+
     @Test fun aScanWhoseReloadFailsToastsTheFailureInsteadOfLibraryUpdated() = runTest {
         val scanner = scanner()
         val vm = newVm(scanner = scanner)
@@ -296,6 +310,9 @@ class HomeViewModelTest {
         assertEquals(listOf("Scanning…", "Could not refresh"), toasts.toList())
         assertEquals(before, vm.state.value)
     }
+
+    /** Lets reloads still in flight finish before the test (and its Main dispatcher) ends. */
+    private suspend fun settle() = withContext(Dispatchers.Default) { delay(500) }
 
     // Card menu (I3)
 
@@ -317,6 +334,7 @@ class HomeViewModelTest {
         awaitRealTime { homeLoads.get() == 2 }
         assertTrue("POST /api/shows/1/watched" in requests)
         assertTrue(writeBodies.any { it.contains("\"watched\":true") })
+        settle()
     }
 
     @Test fun markMovieWatchedPostsThenReloads() = runTest {
@@ -326,6 +344,7 @@ class HomeViewModelTest {
         awaitRealTime { homeLoads.get() == 2 }
         assertTrue("POST /api/items/20/watched" in requests)
         assertTrue(writeBodies.any { it.contains("\"watched\":false") })
+        settle()
     }
 
     @Test fun deletingAShowAsksWithItsFileCountThenDeletesAndReloads() = runTest {
@@ -339,6 +358,7 @@ class HomeViewModelTest {
         awaitRealTime { homeLoads.get() == 2 }
         assertTrue("DELETE /api/shows/1" in requests)
         awaitRealTime { "Moved to Recycle Bin" in toasts }
+        settle()
     }
 
     @Test fun deletingAMovieAsksForOneFileThenDeletesAndReloads() = runTest {
@@ -350,6 +370,7 @@ class HomeViewModelTest {
         vm.confirmDelete()
         awaitRealTime { homeLoads.get() == 2 }
         assertTrue("DELETE /api/movies/20" in requests)
+        settle()
     }
 
     @Test fun cancellingADeleteDeletesNothing() = runTest {
