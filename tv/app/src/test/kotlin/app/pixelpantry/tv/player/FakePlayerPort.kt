@@ -64,6 +64,12 @@ class FakePlayerPort : PlayerPort {
         fire { it.onPlayWhenReadyChanged(value, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) }
     }
 
+    override fun stop() {
+        calls += "stop"
+        playing = false
+        state = Player.STATE_IDLE
+    }
+
     override fun seekTo(ms: Long) {
         calls += "seekTo($ms)"
         seeks += ms

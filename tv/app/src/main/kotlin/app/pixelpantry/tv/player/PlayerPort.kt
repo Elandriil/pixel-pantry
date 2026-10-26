@@ -40,6 +40,9 @@ interface PlayerPort {
     fun setAudioTrack(groupIndex: Int)
     fun play()
     fun pause()
+
+    /** Releases the decoders and the stream (the app went to the background); the item is kept for [prepare]. */
+    fun stop()
     fun seekTo(ms: Long)
     fun addListener(listener: PlayerListener)
     fun removeListener(listener: PlayerListener)

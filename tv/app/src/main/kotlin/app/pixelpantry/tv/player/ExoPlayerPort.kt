@@ -186,6 +186,7 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
 
     override fun play() = exoPlayer.play()
     override fun pause() = exoPlayer.pause()
+    override fun stop() = exoPlayer.stop()
     override fun seekTo(ms: Long) = exoPlayer.seekTo(ms)
     override fun addListener(listener: PlayerListener) { listeners += listener }
     override fun removeListener(listener: PlayerListener) { listeners -= listener }

@@ -63,6 +63,7 @@ fun PlayerScreen(vm: PlayerViewModel, onExit: () -> Unit, onChangeServer: () -> 
         }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.onHostStopped() }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { vm.onHostStarted() }
 
     val current = state
     val countdownActive by vm.countdownActive.collectAsState()

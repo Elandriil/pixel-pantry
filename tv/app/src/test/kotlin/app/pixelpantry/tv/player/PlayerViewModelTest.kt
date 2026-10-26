@@ -953,11 +953,87 @@ class PlayerViewModelTest {
         assertTrue(s.paused)
         assertTrue(s.overlayVisible)
         assertFalse(port.whenReady)
-        assertEquals("prepared and positioned, not played", "seekTo(120000)", port.calls.last())
-        // OK on return plays it.
+        // Loaded in the background: nothing is prepared until the app is back (I7) ...
+        assertEquals(listOf("4"), port.prepared.map { it.mediaId })
+        assertTrue(port.calls.drop(port.calls.indexOf("stop")).none { it == "play" || it == "prepare" })
+        // ... then it is prepared at its saved position, not played ...
+        vm.onHostStarted()
+        assertEquals(listOf("4", "5"), port.prepared.map { it.mediaId })
+        assertEquals(120_000L, port.preparedAt.last())
+        assertEquals("prepare", port.calls.last())
+        assertTrue(vm.current().paused)
+        assertTrue(vm.current().overlayVisible)
+        // ... and OK plays it.
         vm.togglePause()
         assertEquals("play", port.calls.last())
         assertFalse(vm.current().paused)
+    }
+
+    // Background (I7)
+
+    @Test fun leavingTheAppPausesThenStopsThePlayer() = playerTest {
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        port.position = 812_000
+        val before = port.calls.size
+        vm.onHostStopped()
+        assertEquals(listOf("pause", "stop"), port.calls.drop(before))
+        awaitRealTime { progressPosts.any { it.position() == 812.0 } }
+        vm.onHostStopped() // a second stop does nothing more
+        assertEquals(listOf("pause", "stop"), port.calls.drop(before))
+    }
+
+    @Test fun returningPreparesAgainAtTheSavedPositionPausedWithTheOverlay() = playerTest {
+        itemBody = subtitledItem(subtitleChoice = "embedded:3")
+        val vm = vm()
+        vm.playing()
+        tracksArrive(sidecarEn)
+        port.duration = 3_000_000
+        port.position = 812_000
+        vm.onHostStopped()
+        val before = port.calls.size
+        vm.onHostStarted()
+        assertEquals("prepared, no seek to 0, no auto-play", listOf("prepare"), port.calls.drop(before))
+        assertEquals(812_000L, port.preparedAt.last())
+        assertTrue(vm.current().paused)
+        assertTrue(vm.current().overlayVisible)
+        assertEquals(812_000L, vm.current().positionMs)
+        // The subtitle choice is applied again to the re-prepared item's tracks.
+        val selections = port.textSelections.size
+        tracksArrive(sidecarEn)
+        assertEquals(selections + 1, port.textSelections.size)
+        assertEquals(2, port.textSelections.last())
+        // A start without a stop before it does nothing.
+        vm.onHostStarted()
+        assertEquals(listOf("prepare"), port.calls.drop(before))
+        vm.togglePause()
+        assertEquals("play", port.calls.last())
+    }
+
+    @Test fun leavingTheAppWhileLoadingHoldsTheStart() = playerTest {
+        itemDelayMs = 300
+        val vm = vm()
+        assertEquals(UiState.Loading, vm.state.value)
+        vm.onHostStopped()
+        val s = vm.playing()
+        assertTrue(s.paused)
+        assertTrue(s.overlayVisible)
+        assertTrue("nothing prepared in the background", port.calls.none { it == "prepare" || it == "play" })
+        vm.onHostStarted()
+        assertEquals(listOf("prepare"), port.calls)
+        assertEquals(754_500L, port.preparedAt.last())
+        assertTrue(vm.current().paused)
+    }
+
+    @Test fun returningWhileStillLoadingPlaysAsUsual() = playerTest {
+        itemDelayMs = 300
+        val vm = vm()
+        vm.onHostStopped()
+        vm.onHostStarted()
+        val s = vm.playing()
+        assertFalse(s.paused)
+        assertEquals("play", port.calls.last())
     }
 
     // Subtitles, audio, sub delay, online search (Task 10)

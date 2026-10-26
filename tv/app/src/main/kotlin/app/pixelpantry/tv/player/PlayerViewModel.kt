@@ -160,8 +160,18 @@ class PlayerViewModel(
     /** A next/previous switch is in flight; further presses are ignored until it ends (Review Focus 5). */
     private var isSwitching = false
 
-    /** The app went to the background during a switch: the item it loads is prepared but not played. */
+    /** The app went to the background during a switch or the load: the item it loads is not played. */
     private var holdNextStart = false
+
+    /** The host (activity) is stopped: the app is in the background. */
+    private var hostStopped = false
+
+    /**
+     * The player was stopped (decoders released) while in the background; [onHostStarted] prepares the item again
+     * at [resumeAtMs], paused.
+     */
+    private var stoppedInBackground = false
+    private var resumeAtMs = 0L
 
     /** The subtitle plan the prepared MediaItem was built from (its sidecar URIs, the chosen one). */
     var currentPlan: SubtitlePlan.Plan? = null
@@ -286,13 +296,20 @@ class PlayerViewModel(
         // Only a stored choice overrides the player's audio selection (I1).
         pendingAudio = plan.storedAudioChoice
         audioOverridden = false
-        port.prepare(mediaItem(d, plan))
         val progress = d.item.progress
         val startMs = if (fromStart || progress == null || progress.watched) 0L else (progress.position * 1000).toLong()
-        port.seekTo(startMs)
         val hold = holdNextStart
         holdNextStart = false
-        if (!hold) port.play()
+        stoppedInBackground = false
+        if (hold && hostStopped) {
+            // Loaded in the background: nothing is prepared until the app is back (onHostStarted).
+            stoppedInBackground = true
+            resumeAtMs = startMs
+        } else {
+            port.prepare(mediaItem(d, plan))
+            port.seekTo(startMs)
+            if (!hold) port.play()
+        }
         hideJob?.cancel()
         _state.value = UiState.Playing(
             detail = d,
@@ -850,10 +867,38 @@ class PlayerViewModel(
      */
     fun onHostStopped() {
         if (exiting) return
-        if (isSwitching) holdNextStart = true
+        hostStopped = true
+        if (isSwitching || _state.value is UiState.Loading) holdNextStart = true
         val s = _state.value as? UiState.Playing ?: return
         cancelCountdown()
         if (!s.paused) togglePause()
+        // After the PAUSE report took the position: free the decoders and the stream while in the background.
+        if (!stoppedInBackground) {
+            resumeAtMs = port.currentPositionMs
+            port.stop()
+            stoppedInBackground = true
+        }
+    }
+
+    /**
+     * The app is in the foreground again: a player stopped in the background is prepared again where it was,
+     * paused with the overlay up (OK plays). A load still in flight starts playing as usual.
+     */
+    fun onHostStarted() {
+        hostStopped = false
+        if (exiting) return
+        if (_state.value is UiState.Loading && !isSwitching) holdNextStart = false
+        if (!stoppedInBackground) return
+        val s = _state.value as? UiState.Playing ?: return
+        val d = detail ?: return
+        val plan = currentPlan ?: return
+        stoppedInBackground = false
+        // The prepared item's tracks are read again: re-apply the choices (one still pending stays).
+        pendingText = pendingText ?: s.subtitleChoice
+        pendingAudio = pendingAudio ?: if (audioOverridden) s.audioChoice else null
+        port.prepare(mediaItem(d, plan), startPositionMs = resumeAtMs)
+        hideJob?.cancel()
+        updatePlaying { it.copy(paused = true, overlayVisible = true, positionMs = resumeAtMs, buffering = false) }
     }
 
     private fun fail(message: String) {
