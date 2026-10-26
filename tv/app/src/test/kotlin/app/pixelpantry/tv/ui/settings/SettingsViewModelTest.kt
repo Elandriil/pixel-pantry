@@ -14,7 +14,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -104,6 +109,7 @@ class SettingsViewModelTest {
     private val vms = mutableListOf<SettingsViewModel>()
 
     @After fun tearDown() {
+        extraServers.forEach { runCatching { it.shutdown() } }
         vms.forEach { it.viewModelScope.cancel() }
         scope.cancel()
         toastScope.cancel()
@@ -137,34 +143,49 @@ class SettingsViewModelTest {
         assertEquals("0.1.0", vm.version)
     }
 
+    /** Lets the save debounce elapse (virtual time) and waits for [count] PUTs to arrive (real time). */
+    private suspend fun TestScope.flushSaves(count: Int) {
+        advanceTimeBy(SettingsViewModel.SAVE_DEBOUNCE_MS + 1)
+        runCurrent()
+        awaitRealTime { puts.size == count }
+    }
+
     @Test fun stepperClampsTo5To120AndPutsOnlyTheChangedKey() = runTest {
         val vm = vm()
         vm.adjustSkipBack(+5)
-        awaitRealTime { vm.settings.value.skipBackSeconds == 120 }
+        assertEquals("shown at once", 120, vm.settings.value.skipBackSeconds)
+        assertTrue("not saved before the debounce", puts.isEmpty())
+        flushSaves(1)
         assertEquals(listOf("""{"skipBackSeconds":120}"""), puts.toList())
 
         vm.adjustSkipBack(+5) // already at the top: nothing to save
         vm.adjustSkipForward(-5) // already at the bottom
+        advanceTimeBy(1_000)
+        runCurrent()
         delay(100)
         assertEquals(1, puts.size)
 
         vm.adjustSkipForward(+5)
-        awaitRealTime { vm.settings.value.skipForwardSeconds == 10 }
+        flushSaves(2)
         assertEquals("""{"skipForwardSeconds":10}""", puts.last())
-        assertEquals(Settings(120, 10, true), vm.settings.value)
+        awaitRealTime { vm.settings.value == Settings(120, 10, true) }
     }
 
-    @Test fun rapidPressesAccumulate() = runTest {
+    @Test fun rapidPressesShowAtOnceAndSaveOnceWithTheLatestValue() = runTest {
         val vm = vm()
         vm.adjustSkipForward(+5)
+        advanceTimeBy(200)
         vm.adjustSkipForward(+5)
+        advanceTimeBy(200)
         vm.adjustSkipForward(+5)
-        awaitRealTime { puts.size == 3 }
-        awaitRealTime { vm.settings.value.skipForwardSeconds == 20 }
-        assertEquals(
-            listOf("""{"skipForwardSeconds":10}""", """{"skipForwardSeconds":15}""", """{"skipForwardSeconds":20}"""),
-            puts.toList(),
-        )
+        assertEquals(20, vm.settings.value.skipForwardSeconds)
+        advanceTimeBy(SettingsViewModel.SAVE_DEBOUNCE_MS - 1)
+        runCurrent()
+        assertTrue("still within the debounce of the last press", puts.isEmpty())
+        flushSaves(1)
+        assertEquals(listOf("""{"skipForwardSeconds":20}"""), puts.toList())
+        awaitRealTime { current.skipForwardSeconds == 20 }
+        assertEquals(20, vm.settings.value.skipForwardSeconds)
     }
 
     @Test fun toggleAutoplayPutsOnlyAutoplay() = runTest {
@@ -178,9 +199,11 @@ class SettingsViewModelTest {
         val vm = vm()
         failPut = true
         vm.adjustSkipBack(-5)
+        assertEquals(110, vm.settings.value.skipBackSeconds)
+        flushSaves(1)
         awaitRealTime { toaster.current.value != null }
         assertEquals("Could not save: disk full", toaster.current.value)
-        assertEquals(115, vm.settings.value.skipBackSeconds)
+        awaitRealTime { vm.settings.value.skipBackSeconds == 115 }
         assertEquals(listOf("""{"skipBackSeconds":110}"""), puts.toList())
     }
 
@@ -234,12 +257,78 @@ class SettingsViewModelTest {
         store.setManualAddress(serverAddress)
         val locator = FakeLocator(ServerResolver.Result.NotFound(listOf("http://10.0.0.20:8765")))
         val vm = vm(locator)
+        awaitRealTime { vm.manualAddress.value == serverAddress }
         vm.useAutomaticDiscovery()
         awaitRealTime { toaster.current.value != null }
         assertEquals("No server found", toaster.current.value)
         assertEquals(1, locator.calls)
-        assertNull(store.manualAddress.first())
+        assertEquals("the manual address is put back", serverAddress, store.manualAddress.first())
+        awaitRealTime { vm.manualAddress.value == serverAddress }
         assertEquals(serverUrl, api.baseUrl)
         assertEquals(serverUrl, vm.serverAddress.value)
+    }
+
+    /** A second server that answers /api/info after [delayMs], with [code] (200 = a valid Pixel Pantry reply). */
+    private fun slowServer(code: Int, delayMs: Long = 500): MockWebServer = MockWebServer().also { slow ->
+        slow.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val r = if (code == 200) json("""{"name":"Pixel Pantry","version":"1"}""") else MockResponse().setResponseCode(code)
+                return r.setHeadersDelay(delayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            }
+        }
+        slow.start()
+        extraServers += slow
+    }
+
+    private val extraServers = mutableListOf<MockWebServer>()
+
+    @Test fun overlappingFailingProbesNeverMoveTheBaseUrl() = runTest {
+        val locator = FakeLocator()
+        val vm = vm(locator)
+        val slow = slowServer(404)
+        val slowAddress = "${slow.hostName}:${slow.port}"
+
+        // Two raw probes at once against a failing server, as Connect + Settings could start them.
+        val probe = ServerResolver.apiProbe(api)
+        val results = withContext(Dispatchers.Default) {
+            listOf(async { probe("http://$slowAddress") }, async { probe("http://$slowAddress") }).awaitAll()
+        }
+        assertEquals(listOf(false, false), results)
+        assertEquals(serverUrl, api.baseUrl)
+
+        // In Settings: while one probe runs, further address actions are ignored and other requests still go
+        // to the current server.
+        vm.setManualAddress(slowAddress)
+        assertTrue(vm.connecting.value)
+        vm.setManualAddress(slowAddress)
+        vm.useAutomaticDiscovery()
+        vm.adjustSkipForward(+5)
+        flushSaves(1)
+        assertEquals("""{"skipForwardSeconds":10}""", puts.single())
+        awaitRealTime { toaster.current.value == "Cannot reach $slowAddress" }
+        awaitRealTime { !vm.connecting.value }
+        assertEquals(3, slow.requestCount) // two raw probes + one from Settings
+        assertEquals(0, locator.calls)
+        assertEquals(serverUrl, api.baseUrl)
+        assertEquals(serverUrl, vm.serverAddress.value)
+        assertNull(store.manualAddress.first())
+    }
+
+    @Test fun cancelledProbeThatLaterSucceedsDoesNotSwitchServers() = runTest {
+        val vm = vm()
+        val slow = slowServer(200)
+        val slowAddress = "${slow.hostName}:${slow.port}"
+        vm.startEditingAddress()
+        vm.setManualAddress(slowAddress)
+        assertTrue(vm.connecting.value)
+        awaitRealTime { slow.requestCount == 1 } // the probe is in flight
+        vm.cancelEditingAddress()
+        assertFalse(vm.connecting.value)
+        assertFalse(vm.editingAddress.value)
+        delay(800) // the probe's reply (a valid server) arrives after the cancel
+        assertEquals(serverUrl, api.baseUrl)
+        assertEquals(serverUrl, vm.serverAddress.value)
+        assertNull(store.manualAddress.first())
+        assertNull(toaster.current.value)
     }
 }

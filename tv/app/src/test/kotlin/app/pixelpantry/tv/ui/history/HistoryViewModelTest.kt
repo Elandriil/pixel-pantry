@@ -24,6 +24,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.Locale
@@ -42,6 +43,7 @@ class HistoryViewModelTest {
     private val now = at(2026, 10, 26, 22, 0)
 
     private val episode = """{"id":5,"type":"episode","category":"tv","title":"Hello, Ms. Cobel","showId":3,"showTitle":"Severance","season":2,"episode":4,"still":"/img/s.jpg","addedAt":0}"""
+    private val orphanEpisode = """{"id":6,"type":"episode","category":"tv","title":"Lost","season":1,"episode":1,"addedAt":0}"""
     private val movie = """{"id":9,"type":"movie","category":"movies","title":"Se7en","poster":"/img/p.jpg","addedAt":0}"""
 
     private fun entry(session: Int, item: String, itemId: Int, started: Long, seconds: Double) =
@@ -51,7 +53,8 @@ class HistoryViewModelTest {
         ${entry(4, episode, 5, at(2026, 10, 26, 21, 14), 1925.0)},
         ${entry(3, movie, 9, at(2026, 10, 26, 0, 30), 30.0)},
         ${entry(2, episode, 5, at(2026, 10, 25, 23, 59), 600.0)},
-        ${entry(1, movie, 9, at(2026, 10, 21, 20, 5), 3600.0)}
+        ${entry(1, movie, 9, at(2026, 10, 21, 20, 5), 3600.0)},
+        ${entry(0, orphanEpisode, 6, at(2025, 12, 31, 12, 0), 120.0)}
     ]}"""
     private val statsBody = """{"hoursWeek":1.5,"hoursMonth":2.25,"hoursAll":10.0,"episodesAll":4,"moviesAll":1,"topShowMonth":{"showId":3,"title":"Severance","hours":2.0}}"""
 
@@ -91,7 +94,11 @@ class HistoryViewModelTest {
 
     @Test fun groupsByLocalDayWithTodayYesterdayAndDateLabels() = runTest {
         val s = vm().loaded()
-        assertEquals(listOf("Today", "Yesterday", "Wed 21 Oct"), s.days.map { it.label })
+        assertEquals(listOf("Today", "Yesterday", "Wed 21 Oct", "Wed 31 Dec 2025"), s.days.map { it.label })
+        assertEquals(
+            listOf(LocalDate.of(2026, 10, 26), LocalDate.of(2026, 10, 25), LocalDate.of(2026, 10, 21), LocalDate.of(2025, 12, 31)),
+            s.days.map { it.date },
+        )
         assertEquals(listOf(4, 3), s.days[0].entries.map { it.entry.sessionId })
         assertEquals(listOf(2), s.days[1].entries.map { it.entry.sessionId })
         assertEquals(listOf(1), s.days[2].entries.map { it.entry.sessionId })
@@ -130,6 +137,17 @@ class HistoryViewModelTest {
         vm.open(s.days[0].entries[0])
         vm.open(s.days[0].entries[1])
         assertEquals(listOf(NavEvent.Show(3), NavEvent.Movie(9)), events)
+    }
+
+    @Test fun episodeWithoutAShowGoesNowhere() = runTest {
+        val vm = vm()
+        val s = vm.loaded()
+        val events = mutableListOf<NavEvent>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.navEvents.toList(events) }
+        val orphan = s.days.last().entries.single()
+        assertEquals("S1 · E1 · Lost", orphan.title)
+        vm.open(orphan)
+        assertTrue(events.isEmpty())
     }
 
     @Test fun reloadsOnLaterResumesOnly() = runTest {

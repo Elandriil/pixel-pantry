@@ -28,6 +28,13 @@ class ApiClient(private val http: OkHttpClient, private val json: Json) {
         if (relative.startsWith("http")) relative else baseUrl.trimEnd('/') + relative
 
     suspend fun info(): InfoResponse = get("/api/info")
+
+    /**
+     * `GET /api/info` on [candidate] instead of [baseUrl], which is left untouched: probing a server never
+     * redirects requests made meanwhile (or after a cancelled probe) away from the current one.
+     */
+    suspend fun info(candidate: String): InfoResponse =
+        execute("GET", "/api/info", null, emptyList(), InfoResponse.serializer(), candidate)
     suspend fun home(): CategoryPage = get("/api/home")
     suspend fun category(c: String): CategoryPage = get("/api/categories/$c")
     suspend fun show(id: Int): ShowDetail = get("/api/shows/$id")
@@ -91,7 +98,7 @@ class ApiClient(private val http: OkHttpClient, private val json: Json) {
         path: String,
         body: RequestBody? = null,
         query: List<Pair<String, String>> = emptyList(),
-    ): T = execute(method, path, body, query, json.serializersModule.serializer<T>())
+    ): T = execute(method, path, body, query, json.serializersModule.serializer<T>(), baseUrl)
 
     private suspend fun <T> execute(
         method: String,
@@ -99,13 +106,14 @@ class ApiClient(private val http: OkHttpClient, private val json: Json) {
         body: RequestBody?,
         query: List<Pair<String, String>>,
         serializer: KSerializer<T>,
+        base: String,
     ): T = withContext(Dispatchers.IO) {
         val url = try {
-            (baseUrl.trimEnd('/') + path).toHttpUrl().newBuilder().apply {
+            (base.trimEnd('/') + path).toHttpUrl().newBuilder().apply {
                 query.forEach { (k, v) -> addQueryParameter(k, v) }
             }.build()
         } catch (e: IllegalArgumentException) {
-            throw ApiException(0, "Cannot reach $baseUrl")
+            throw ApiException(0, "Cannot reach $base")
         }
         val request = Request.Builder().url(url).method(method, body ?: if (method == "GET") null else EMPTY_BODY).build()
         try {
@@ -115,9 +123,9 @@ class ApiClient(private val http: OkHttpClient, private val json: Json) {
                 json.decodeFromString(serializer, text)
             }
         } catch (e: IOException) {
-            throw ApiException(0, "Cannot reach $baseUrl")
+            throw ApiException(0, "Cannot reach $base")
         } catch (e: kotlinx.serialization.SerializationException) {
-            throw ApiException(0, "Unexpected response from $baseUrl")
+            throw ApiException(0, "Unexpected response from $base")
         }
     }
 

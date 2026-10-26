@@ -151,6 +151,7 @@
     <string name="settings_server">Server address</string>
     <string name="settings_server_manual">Set manually</string>
     <string name="settings_server_auto">Found automatically</string>
+    <string name="settings_connecting">Connecting…</string>
     <string name="settings_change">Change…</string>
     <string name="settings_use_discovery">Use automatic discovery</string>
     <string name="settings_version">App version</string>

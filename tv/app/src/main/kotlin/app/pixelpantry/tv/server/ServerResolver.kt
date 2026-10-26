@@ -61,18 +61,17 @@ class ServerResolver(
     companion object {
         const val MDNS_TIMEOUT_MS = 5_000L
 
-        /** Production probe: the candidate must answer /api/info as "Pixel Pantry". */
+        /**
+         * Production probe: the candidate must answer /api/info as "Pixel Pantry". It asks the candidate directly
+         * and never changes [ApiClient.baseUrl].
+         */
         fun apiProbe(api: ApiClient): suspend (String) -> Boolean = { url ->
-            val previous = api.baseUrl
-            api.baseUrl = url
             try {
-                api.info().name == "Pixel Pantry"
+                api.info(url).name == "Pixel Pantry"
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 false
-            } finally {
-                api.baseUrl = previous
             }
         }
     }

@@ -9,6 +9,7 @@ import app.pixelpantry.tv.server.ServerLocator
 import app.pixelpantry.tv.server.ServerResolver
 import app.pixelpantry.tv.server.ServerStore
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,7 +57,9 @@ class ConnectViewModel(
         job?.cancel()
         _state.value = UiState.Resolving()
         job = viewModelScope.launch {
-            _state.value = when (val r = locator.resolve()) {
+            val r = locator.resolve()
+            ensureActive() // a retry or manual submit superseded this search; do not switch servers
+            _state.value = when (r) {
                 is ServerResolver.Result.Found -> ready(r.baseUrl)
                 is ServerResolver.Result.NotFound -> {
                     lastTried = r.tried
@@ -83,7 +86,9 @@ class ConnectViewModel(
         val url = "http://$trimmed"
         _state.value = UiState.Resolving(triedSoFar = listOf(url))
         job = viewModelScope.launch {
-            _state.value = if (probe(url)) {
+            val ok = probe(url)
+            ensureActive() // superseded meanwhile; do not switch servers
+            _state.value = if (ok) {
                 // Storing is best-effort: a storage error must not undo a working connection.
                 runCatching { store.setManualAddress(trimmed) }
                 ready(url)

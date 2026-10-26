@@ -107,7 +107,7 @@ private fun Loaded(state: UiState.Loaded, onOpen: (HistoryRow) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             state.days.forEach { day ->
-                item(key = "day:${day.label}") {
+                item(key = "day:${day.date}") {
                     Text(
                         day.label,
                         style = MaterialTheme.typography.titleMedium,

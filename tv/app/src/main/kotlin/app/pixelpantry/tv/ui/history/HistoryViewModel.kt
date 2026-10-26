@@ -50,7 +50,8 @@ class HistoryViewModel(
         val timeLabel: String,
     )
 
-    data class DayGroup(val label: String, val entries: List<HistoryRow>)
+    /** One local day; [date] is its stable identity, [label] what is shown. */
+    data class DayGroup(val date: LocalDate, val label: String, val entries: List<HistoryRow>)
 
     sealed interface UiState {
         data object Loading : UiState
@@ -66,6 +67,7 @@ class HistoryViewModel(
     val navEvents: SharedFlow<NavEvent> = _navEvents.asSharedFlow()
 
     private val dayFormatter = DateTimeFormatter.ofPattern("EEE d MMM", locale)
+    private val dayWithYearFormatter = DateTimeFormatter.ofPattern("EEE d MMM yyyy", locale)
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm", locale)
     private var loadJob: Job? = null
     private var resumedBefore = false
@@ -96,10 +98,13 @@ class HistoryViewModel(
         if (resumedBefore) load() else resumedBefore = true
     }
 
-    /** Episodes open their show's page, movies the movie page. */
+    /** Episodes open their show's page, movies the movie page. An episode without a show id goes nowhere. */
     fun open(row: HistoryRow) {
-        val showId = row.item.showId
-        _navEvents.tryEmit(if (row.item.type == "episode" && showId != null) NavEvent.Show(showId) else NavEvent.Movie(row.item.id))
+        val event = when (row.item.type) {
+            "episode" -> row.item.showId?.let { NavEvent.Show(it) }
+            else -> NavEvent.Movie(row.item.id)
+        } ?: return
+        _navEvents.tryEmit(event)
     }
 
     private fun group(entries: List<HistoryEntry>): List<DayGroup> {
@@ -107,13 +112,13 @@ class HistoryViewModel(
         return entries
             .mapNotNull { entry -> entry.item?.let { entry to it } }
             .groupBy { (entry, _) -> Instant.ofEpochMilli(entry.startedAt).atZone(zone).toLocalDate() }
-            .map { (date, rows) -> DayGroup(dayLabel(date, today), rows.map { (entry, item) -> row(entry, item) }) }
+            .map { (date, rows) -> DayGroup(date, dayLabel(date, today), rows.map { (entry, item) -> row(entry, item) }) }
     }
 
     private fun dayLabel(date: LocalDate, today: LocalDate): String = when (date) {
         today -> strings.today
         today.minusDays(1) -> strings.yesterday
-        else -> date.format(dayFormatter)
+        else -> date.format(if (date.year == today.year) dayFormatter else dayWithYearFormatter)
     }
 
     private fun row(entry: HistoryEntry, item: ItemSummary): HistoryRow {

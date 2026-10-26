@@ -62,6 +62,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
     val serverAddress by vm.serverAddress.collectAsStateWithLifecycle()
     val manualAddress by vm.manualAddress.collectAsStateWithLifecycle()
     val editing by vm.editingAddress.collectAsStateWithLifecycle()
+    val connecting by vm.connecting.collectAsStateWithLifecycle()
     val firstRow = remember { FocusRequester() }
     val changeButton = remember { FocusRequester() }
 
@@ -88,6 +89,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
             StepperRow(
                 label = stringResource(R.string.settings_skip_back),
                 value = stringResource(R.string.settings_seconds, settings.skipBackSeconds),
+                atMin = settings.skipBackSeconds <= SettingsViewModel.MIN_SKIP,
                 onStep = vm::adjustSkipBack,
                 modifier = Modifier.focusRequester(firstRow),
             )
@@ -96,6 +98,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
             StepperRow(
                 label = stringResource(R.string.settings_skip_forward),
                 value = stringResource(R.string.settings_seconds, settings.skipForwardSeconds),
+                atMin = settings.skipForwardSeconds <= SettingsViewModel.MIN_SKIP,
                 onStep = vm::adjustSkipForward,
             )
         }
@@ -112,6 +115,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
             ServerRow(
                 address = serverAddress,
                 manual = manualAddress != null,
+                connecting = connecting,
                 onChange = vm::startEditingAddress,
                 onAutomatic = vm::useAutomaticDiscovery,
                 changeFocus = changeButton,
@@ -170,9 +174,12 @@ private fun RowScope.RowLabel(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
 }
 
-/** LEFT/RIGHT step the value; every other key (UP/DOWN, OK) behaves as usual. */
+/**
+ * LEFT/RIGHT step the value; every other key (UP/DOWN, OK) behaves as usual. At the minimum ([atMin]) LEFT
+ * is not consumed, so it reaches the sidebar.
+ */
 @Composable
-private fun StepperRow(label: String, value: String, onStep: (Int) -> Unit, modifier: Modifier = Modifier) {
+private fun StepperRow(label: String, value: String, atMin: Boolean, onStep: (Int) -> Unit, modifier: Modifier = Modifier) {
     var focused by remember { mutableStateOf(false) }
     SettingSurface(
         onClick = {},
@@ -180,7 +187,7 @@ private fun StepperRow(label: String, value: String, onStep: (Int) -> Unit, modi
             .onFocusChanged { focused = it.isFocused }
             .onPreviewKeyEvent { event ->
                 val delta = when (event.key) {
-                    Key.DirectionLeft -> -SettingsViewModel.STEP
+                    Key.DirectionLeft -> if (atMin) return@onPreviewKeyEvent false else -SettingsViewModel.STEP
                     Key.DirectionRight -> SettingsViewModel.STEP
                     else -> return@onPreviewKeyEvent false
                 }
@@ -203,6 +210,7 @@ private fun StepperRow(label: String, value: String, onStep: (Int) -> Unit, modi
 private fun ServerRow(
     address: String,
     manual: Boolean,
+    connecting: Boolean,
     onChange: () -> Unit,
     onAutomatic: () -> Unit,
     changeFocus: FocusRequester,
@@ -225,7 +233,13 @@ private fun ServerRow(
             Column(horizontalAlignment = Alignment.End) {
                 Text(address, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                 Text(
-                    stringResource(if (manual) R.string.settings_server_manual else R.string.settings_server_auto),
+                    stringResource(
+                        when {
+                            connecting -> R.string.settings_connecting
+                            manual -> R.string.settings_server_manual
+                            else -> R.string.settings_server_auto
+                        },
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -107,6 +107,20 @@ class ApiClientTest {
         }
     }
 
+    @Test fun infoOnCandidateAsksTheCandidateAndLeavesBaseUrlAlone() = runTest {
+        val candidate = MockWebServer().also { it.start() }
+        try {
+            candidate.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"name":"Pixel Pantry","version":"1"}"""))
+            val before = client.baseUrl
+            assertEquals("Pixel Pantry", client.info(candidate.url("/").toString().trimEnd('/')).name)
+            assertEquals(before, client.baseUrl)
+            assertEquals("/api/info", candidate.takeRequest().path)
+            assertEquals(0, server.requestCount)
+        } finally {
+            candidate.shutdown()
+        }
+    }
+
     @Test fun unreachableServerThrowsStatusZeroWithBaseUrl() = runTest {
         server.shutdown()
         try {
