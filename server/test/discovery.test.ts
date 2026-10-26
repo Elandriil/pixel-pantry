@@ -8,14 +8,18 @@ function fakeBonjour() {
   const published: unknown[] = [];
   let stopped = 0;
   let destroyed = 0;
-  const factory = (): BonjourLike => ({
+  let onError: ((err: unknown) => void) | null = null;
+  const factory = (handler: (err: unknown) => void): BonjourLike => {
+    onError = handler;
+    return {
     publish(opts) {
       published.push(opts);
       return { stop: (cb?: () => void) => { stopped++; cb?.(); } };
     },
     destroy: () => { destroyed++; },
-  });
-  return { factory, published, stopped: () => stopped, destroyed: () => destroyed };
+    };
+  };
+  return { factory, published, stopped: () => stopped, destroyed: () => destroyed, onError: () => onError };
 }
 
 test("advertise publishes the pixelpantry service on the port and stop() unpublishes", async () => {
@@ -35,4 +39,14 @@ test("advertise logs and swallows publish errors", async () => {
   });
   await ad.stop();
   expect(log.recent().some((l) => l.includes("ERROR") && l.includes("no multicast"))).toBe(true);
+});
+
+test("advertise passes an error handler that logs runtime mDNS errors instead of throwing", () => {
+  const log = new Logger(join(tmpDir(), "server.log"));
+  const fake = fakeBonjour();
+  advertise(8765, log, fake.factory);
+  const handler = fake.onError();
+  expect(handler).toBeFunction();
+  expect(() => handler!(new Error("EADDRINUSE 5353"))).not.toThrow();
+  expect(log.recent().some((l) => l.includes("ERROR mDNS error") && l.includes("EADDRINUSE 5353"))).toBe(true);
 });

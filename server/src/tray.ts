@@ -37,6 +37,26 @@ $quit.add_Click({
 
 $icon.ContextMenuStrip = $menu
 $icon.Visible = $true
+
+# Liveness poll: remove the icon once the server has stopped or crashed.
+$script:failures = 0
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 5000
+$timer.add_Tick({
+  try {
+    Invoke-RestMethod -TimeoutSec 3 "$base/admin/api/status" | Out-Null
+    $script:failures = 0
+  } catch {
+    $script:failures++
+    if ($script:failures -ge 3) {
+      $timer.Stop()
+      $icon.Visible = $false
+      $icon.Dispose()
+      [System.Windows.Forms.Application]::Exit()
+    }
+  }
+})
+$timer.Start()
 [System.Windows.Forms.Application]::Run()
 `;
 
@@ -44,6 +64,8 @@ export interface TrayOptions {
   platform?: string;
   dataDir?: string;
   spawn?: typeof Bun.spawn;
+  /** How long `stop()` waits for the script to notice the server is gone before killing it. */
+  stopGraceMs?: number;
 }
 
 /** Starts the tray icon on Windows; returns null elsewhere or if it cannot start. */
@@ -61,10 +83,13 @@ export function startTray(port: number, log: Logger, opts: TrayOptions = {}): { 
     );
     log.info("tray started");
     return {
+      // The script's liveness poll removes the icon cleanly once the server is down; kill only as a fallback.
       stop() {
-        try {
-          child.kill();
-        } catch {}
+        setTimeout(() => {
+          try {
+            child.kill();
+          } catch {}
+        }, opts.stopGraceMs ?? 10_000).unref();
       },
     };
   } catch (err) {
