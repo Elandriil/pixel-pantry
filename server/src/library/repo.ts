@@ -140,6 +140,7 @@ export class Repo {
       episodeGet: p("SELECT * FROM items WHERE show_id = ? AND season_number = ? AND episode_number = ?"),
       movieByKey: p("SELECT * FROM items WHERE type = 'movie' AND parsed_key = ?"),
       itemGet: p("SELECT * FROM items WHERE id = ?"),
+      itemMatchError: p("UPDATE items SET match_error = ?, match_attempted_at = ? WHERE id = ?"),
       itemDeleted: p("UPDATE items SET deleted_at = ? WHERE id = ?"),
       episodeList: p(
         "SELECT * FROM items WHERE show_id = ? AND deleted_at IS NULL ORDER BY season_number, episode_number",
@@ -302,6 +303,10 @@ export class Repo {
 
   updateItemMeta(id: number, meta: ItemMeta): void {
     this.updatePartial("items", id, ITEM_META, meta);
+  }
+
+  setItemMatchError(id: number, err: string | null, at: number | null): void {
+    this.q.itemMatchError!.run(err, at, id);
   }
 
   getItem(id: number): ItemRow | null {

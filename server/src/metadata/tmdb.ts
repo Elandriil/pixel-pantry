@@ -22,6 +22,7 @@ export type TmdbSeason = {
   name: string;
   poster_path: string | null;
   episodes: {
+    id: number;
     episode_number: number;
     name: string;
     overview: string;
