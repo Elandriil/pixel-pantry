@@ -1,4 +1,4 @@
-import type { FetchFn } from "../types";
+import { resolve, type FetchFn, type Lazy } from "../types";
 
 const BASE = "https://api.opensubtitles.com/api/v1";
 
@@ -30,18 +30,25 @@ interface OsAttributes {
 }
 
 export class OsClient {
-  private token: string | null = null;
+  /** Login token plus the credentials it was obtained with, so a credential change forces a new login. */
+  private session: { token: string; apiKey: string; username: string } | null = null;
   private readonly userAgent: string;
 
   constructor(
-    private readonly opts: { apiKey: string; username: string; password: string; fetchFn: FetchFn; userAgent?: string },
+    private readonly opts: {
+      apiKey: Lazy<string>;
+      username: Lazy<string>;
+      password: Lazy<string>;
+      fetchFn: FetchFn;
+      userAgent?: string;
+    },
   ) {
     this.userAgent = opts.userAgent ?? "PixelPantry v1";
   }
 
   private headers(post: boolean, token?: string): Record<string, string> {
     return {
-      "Api-Key": this.opts.apiKey,
+      "Api-Key": resolve(this.opts.apiKey),
       "User-Agent": this.userAgent,
       Accept: "application/json",
       ...(post ? { "Content-Type": "application/json" } : {}),
@@ -50,7 +57,7 @@ export class OsClient {
   }
 
   private requireConfigured(): void {
-    if (!this.opts.apiKey || !this.opts.username) throw new Error("OpenSubtitles not configured");
+    if (!resolve(this.opts.apiKey) || !resolve(this.opts.username)) throw new Error("OpenSubtitles not configured");
   }
 
   async search(q: OsSearch): Promise<OsResult[]> {
@@ -87,15 +94,24 @@ export class OsClient {
   }
 
   private async login(): Promise<string> {
+    const apiKey = resolve(this.opts.apiKey);
+    const username = resolve(this.opts.username);
     const res = await this.opts.fetchFn(`${BASE}/login`, {
       method: "POST",
       headers: this.headers(true),
-      body: JSON.stringify({ username: this.opts.username, password: this.opts.password }),
+      body: JSON.stringify({ username, password: resolve(this.opts.password) }),
     });
     if (!res.ok) throw new Error(`OpenSubtitles ${res.status}: ${await res.text()}`);
     const { token } = (await res.json()) as { token: string };
-    this.token = token;
+    this.session = { token, apiKey, username };
     return token;
+  }
+
+  /** The cached token, unless the credentials changed since it was obtained. */
+  private cachedToken(): string | null {
+    const s = this.session;
+    if (!s || s.apiKey !== resolve(this.opts.apiKey) || s.username !== resolve(this.opts.username)) return null;
+    return s.token;
   }
 
   private requestDownload(fileId: number, token: string): Promise<Response> {
@@ -108,9 +124,9 @@ export class OsClient {
 
   async download(fileId: number): Promise<string> {
     this.requireConfigured();
-    let res = await this.requestDownload(fileId, this.token ?? (await this.login()));
+    let res = await this.requestDownload(fileId, this.cachedToken() ?? (await this.login()));
     if (res.status === 401) {
-      this.token = null;
+      this.session = null;
       res = await this.requestDownload(fileId, await this.login());
     }
     if (!res.ok) throw new Error(`OpenSubtitles ${res.status}: ${await res.text()}`);

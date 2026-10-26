@@ -1,5 +1,5 @@
 import { Hono, type MiddlewareHandler } from "hono";
-import { networkInterfaces } from "node:os";
+import { lanAddresses } from "../../net";
 import type { Config } from "../../config";
 import adminHtmlModule from "../admin/index.html" with { type: "text" };
 import { jsonBody } from "../body";
@@ -26,14 +26,6 @@ const loopbackOnly: MiddlewareHandler<Env> = async (c, next) => {
   if (!addr || !LOOPBACK.has(addr)) return c.json({ error: "admin is localhost only" }, 403);
   await next();
 };
-
-function lanAddresses(): string[] {
-  const out: string[] = [];
-  for (const list of Object.values(networkInterfaces())) {
-    for (const a of list ?? []) if (a.family === "IPv4" && !a.internal) out.push(a.address);
-  }
-  return out;
-}
 
 const mask = (v: string) => (v ? MASK : "");
 

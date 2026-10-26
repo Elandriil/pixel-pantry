@@ -1,4 +1,4 @@
-import type { FetchFn } from "../types";
+import { resolve, type FetchFn, type Lazy } from "../types";
 
 const BASE = "https://api.themoviedb.org";
 const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -56,12 +56,12 @@ type RawResult = {
 };
 
 export class TmdbClient {
-  private readonly apiKey: string;
+  private readonly apiKey: Lazy<string>;
   private readonly fetchFn: FetchFn;
   private readonly cache: TmdbCache;
   private readonly maxAgeMs: number;
 
-  constructor(opts: { apiKey: string; fetchFn: FetchFn; cache: TmdbCache; cacheMaxAgeMs?: number }) {
+  constructor(opts: { apiKey: Lazy<string>; fetchFn: FetchFn; cache: TmdbCache; cacheMaxAgeMs?: number }) {
     this.apiKey = opts.apiKey;
     this.fetchFn = opts.fetchFn;
     this.cache = opts.cache;
@@ -110,16 +110,17 @@ export class TmdbClient {
   }
 
   private async get<T>(path: string): Promise<T> {
-    if (!this.apiKey) throw new Error("TMDB API key not set");
+    const apiKey = resolve(this.apiKey);
+    if (!apiKey) throw new Error("TMDB API key not set");
     const cached = this.cache.get(path, this.maxAgeMs);
     if (cached !== null) return JSON.parse(cached) as T;
 
-    const bearer = this.apiKey.startsWith("eyJ");
+    const bearer = apiKey.startsWith("eyJ");
     const url = bearer
       ? `${BASE}${path}`
-      : `${BASE}${path}${path.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(this.apiKey)}`;
+      : `${BASE}${path}${path.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(apiKey)}`;
     const res = await this.fetchFn(url, {
-      headers: bearer ? { Authorization: `Bearer ${this.apiKey}`, Accept: "application/json" } : { Accept: "application/json" },
+      headers: bearer ? { Authorization: `Bearer ${apiKey}`, Accept: "application/json" } : { Accept: "application/json" },
     });
     const body = await res.text();
     if (!res.ok) throw new Error(`TMDB ${res.status}: ${body}`);

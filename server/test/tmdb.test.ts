@@ -74,3 +74,17 @@ test("details and season endpoints", async () => {
   await client.movieDetails(7);
   expect(urls.map((u) => new URL(u).pathname)).toEqual(["/3/tv/5", "/3/tv/5/season/2", "/3/movie/7"]);
 });
+
+test("apiKey getter is re-read on each call", async () => {
+  let key = "";
+  const urls: string[] = [];
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return new Response(JSON.stringify({ results: [] }));
+  }) as FetchFn;
+  const client = new TmdbClient({ apiKey: () => key, fetchFn, cache: { get: () => null, set: () => {} } });
+  await expect(client.searchTv("Severance")).rejects.toThrow("TMDB API key not set");
+  key = "NEW";
+  await client.searchTv("Severance");
+  expect(urls).toEqual(["https://api.themoviedb.org/3/search/tv?query=Severance&api_key=NEW"]);
+});

@@ -91,3 +91,36 @@ test("errors: not configured and non-2xx", async () => {
   const b = setup(() => new Response("nope", { status: 500 }));
   await expect(b.client.search({ type: "movie" })).rejects.toThrow("OpenSubtitles 500: nope");
 });
+
+test("credential getters are re-read on each call and a changed login drops the cached token", async () => {
+  const creds = { apiKey: "", username: "", password: "" };
+  const calls: Call[] = [];
+  let tokens = 0;
+  const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const c = { url: String(input), method: init?.method ?? "GET", headers: new Headers(init?.headers), body: init?.body as string | undefined };
+    calls.push(c);
+    if (c.url.endsWith("/login")) return json({ token: `T${++tokens}` });
+    if (c.url.endsWith("/download")) return json({ link: "https://dl.example/x.srt" });
+    return new Response("SUB");
+  }) as FetchFn;
+  const client = new OsClient({
+    apiKey: () => creds.apiKey,
+    username: () => creds.username,
+    password: () => creds.password,
+    fetchFn,
+  });
+  await expect(client.download(1)).rejects.toThrow("OpenSubtitles not configured");
+  Object.assign(creds, { apiKey: "K", username: "u1", password: "p1" });
+  await client.download(1);
+  await client.download(1);
+  Object.assign(creds, { username: "u2", password: "p2" });
+  await client.download(1);
+  const logins = calls.filter((c) => c.url.endsWith("/login"));
+  expect(logins.map((c) => JSON.parse(c.body!))).toEqual([
+    { username: "u1", password: "p1" },
+    { username: "u2", password: "p2" },
+  ]);
+  const downloads = calls.filter((c) => c.url.endsWith("/download"));
+  expect(downloads.map((c) => c.headers.get("Authorization"))).toEqual(["Bearer T1", "Bearer T1", "Bearer T2"]);
+  expect(downloads[0]!.headers.get("Api-Key")).toBe("K");
+});
