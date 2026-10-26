@@ -2,14 +2,15 @@ import { Hono } from "hono";
 import type { Deps } from "./deps";
 import { HttpError } from "./errors";
 import { catalogRoutes } from "./routes/catalog";
+import { streamRoutes } from "./routes/stream";
 
 export { HttpError };
 
 /**
  * Route modules mounted under `/api`. Later tasks add theirs here:
- * Task 12 stream/images, Task 13 playback/subtitles, Task 14 scan/admin.
+ * Task 13 playback/subtitles, Task 14 scan/admin.
  */
-const registerRoutes: ((deps: Deps) => Hono)[] = [catalogRoutes];
+const registerRoutes: ((deps: Deps) => Hono)[] = [catalogRoutes, streamRoutes];
 
 export function buildApp(deps: Deps): Hono {
   const app = new Hono();
