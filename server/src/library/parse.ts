@@ -109,7 +109,7 @@ export function parseVideoPath(relPath: string): ParsedVideo | null {
   if (kind === "movie") season = null;
 
   const titleFolder = [...folders].reverse().find((f) => seasonFromFolder(f) === null);
-  let title = (libAny?.title ?? "").trim();
+  let title = (libAny?.title ?? "").replace(/[._]/g, " ").replace(/\s+/g, " ").trim();
   if (!title && titleFolder) title = cleanFolderTitle(titleFolder);
   if (!title) {
     const head = markerIndex > 0 ? stem.slice(0, markerIndex) : stem;
