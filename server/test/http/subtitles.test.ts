@@ -125,7 +125,8 @@ test("search sends hash and episode info, upstream failure is 503", async () => 
   expect(r.status).toBe(200);
   expect(r.json.results).toEqual([{ fileId: 7, release: "r", hashMatch: true, downloads: 1, language: "en", fps: null }]);
   const q = Object.fromEntries(new URL(urls[0]!).searchParams);
-  expect(q).toMatchObject({ moviehash: expect.stringMatching(/^[0-9a-f]{16}$/), query: "Lost", season_number: "1", episode_number: "2", tmdb_id: "4607", type: "episode" });
+  expect(q).toMatchObject({ moviehash: expect.stringMatching(/^[0-9a-f]{16}$/), query: "Lost", season_number: "1", episode_number: "2", parent_tmdb_id: "4607", type: "episode" });
+  expect(q.tmdb_id).toBeUndefined();
 
   fail = true;
   const f = await request(app, `/api/items/${ep}/subtitles/search`);

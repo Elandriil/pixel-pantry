@@ -16,6 +16,7 @@ export interface OsSearch {
   query?: string;
   season?: number | null;
   episode?: number | null;
+  /** The movie's TMDB id, or for an episode its show's (sent as `parent_tmdb_id`). */
   tmdbId?: number | null;
   type: "episode" | "movie";
 }
@@ -70,7 +71,7 @@ export class OsClient {
     add("query", q.query);
     add("season_number", q.season);
     add("episode_number", q.episode);
-    add("tmdb_id", q.tmdbId);
+    add(q.type === "episode" ? "parent_tmdb_id" : "tmdb_id", q.tmdbId);
     params.set("languages", "en");
     params.set("type", q.type);
     const res = await this.opts.fetchFn(`${BASE}/subtitles?${params}`, { headers: this.headers(false) });

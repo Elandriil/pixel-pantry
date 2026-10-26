@@ -43,6 +43,14 @@ test("search sends params and ranks hash matches first, then downloads", async (
   expect(r[2]!.fps).toBeNull();
 });
 
+test("episode search passes the show id as parent_tmdb_id", async () => {
+  const { calls, client } = setup(() => json({ data: [] }));
+  await client.search({ query: "Lost", season: 1, episode: 2, tmdbId: 4607, type: "episode" });
+  const q = Object.fromEntries(new URL(calls[0]!.url).searchParams);
+  expect(q.parent_tmdb_id).toBe("4607");
+  expect(q.tmdb_id).toBeUndefined();
+});
+
 test("search omits empty params and passes tmdb_id", async () => {
   const { calls, client } = setup(() => json({ data: [] }));
   await client.search({ query: "Heat", tmdbId: 949, type: "movie" });
