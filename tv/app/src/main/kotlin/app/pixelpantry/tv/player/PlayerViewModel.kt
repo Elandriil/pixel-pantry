@@ -251,7 +251,8 @@ class PlayerViewModel(
     }
 
     private fun fail(message: String) {
-        if (_state.value is UiState.Error) return
+        // After BACK the STOP report is already out and the screen is leaving: no second report, no error screen.
+        if (exiting || _state.value is UiState.Error) return
         if (_state.value is UiState.Playing) flush(Reason.STOP)
         tickerJob?.cancel()
         hideJob?.cancel()

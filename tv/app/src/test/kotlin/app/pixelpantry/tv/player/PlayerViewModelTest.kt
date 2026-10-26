@@ -212,6 +212,8 @@ class PlayerViewModelTest {
         assertTrue(vm.current().paused)
         assertTrue(vm.current().overlayVisible)
         awaitRealTime { progressPosts.any { it["position"]!!.jsonPrimitive.double == 800.0 } }
+        withContext(Dispatchers.Default) { delay(300) }
+        assertEquals("exactly one PAUSE report", 1, progressPosts.size)
 
         advanceTimeBy(10_000)
         assertTrue("overlay stays while paused", vm.current().overlayVisible)
@@ -289,6 +291,19 @@ class PlayerViewModelTest {
         // Back from the error screen leaves the player.
         vm.stopAndExit()
         assertTrue(vm.exitRequested.value)
+    }
+
+    @Test fun aPlayerErrorAfterBackIsIgnored() = playerTest {
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        port.position = 900_000
+        vm.stopAndExit()
+        port.fire { it.onPlayerError("Lost connection to the server") }
+        assertTrue(vm.state.value is UiState.Playing)
+        awaitRealTime { progressPosts.isNotEmpty() }
+        withContext(Dispatchers.Default) { delay(300) }
+        assertEquals("only the STOP report", 1, progressPosts.size)
     }
 
     @Test fun loadFailureIsAnError() = playerTest {

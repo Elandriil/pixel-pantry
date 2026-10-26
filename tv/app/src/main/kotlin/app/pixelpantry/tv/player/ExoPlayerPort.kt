@@ -37,8 +37,8 @@ class PlaybackErrorTexts(
  *
  * A lost server must surface as an error within seconds (Review Focus 3), but ExoPlayer only reports a failed
  * load once its buffer has drained, which can be most of a minute. So the load error policy retries every
- * 1–2 s and gives up once a load has kept failing for [GIVE_UP_AFTER_MS] (any data arriving starts over), then
- * reports the failure itself. A Wi-Fi blip of a few seconds is ridden out; a dead server shows in about 10 s.
+ * 1–2 s and gives up once a load has kept failing for [GIVE_UP_AFTER_MS] (see [LoadErrorBudget] for when a new
+ * run of failures starts), then reports the failure itself. A Wi-Fi blip of a few seconds is ridden out; a dead server shows in about 10 s.
  */
 @OptIn(UnstableApi::class)
 class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : PlayerPort {
@@ -46,16 +46,13 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
     private val main = Handler(Looper.getMainLooper())
     private var failed = false
 
-    /** Start of the current run of failed attempts of a load (loader thread). */
-    @Volatile private var failingSinceMs = 0L
+    private val budget = LoadErrorBudget(giveUpAfterMs = GIVE_UP_AFTER_MS)
 
     private val loadErrorPolicy = object : DefaultLoadErrorHandlingPolicy() {
         override fun getRetryDelayMsFor(info: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
-            val now = SystemClock.elapsedRealtime()
-            // errorCount restarts at 1 whenever the load made progress, so a run starts there.
-            if (info.errorCount <= 1) failingSinceMs = now
             val fatal = super.getRetryDelayMsFor(info) == C.TIME_UNSET
-            if (!fatal && now - failingSinceMs < GIVE_UP_AFTER_MS) return if (info.errorCount <= 1) 1_000 else 2_000
+            val decision = budget.onError(info.loadEventInfo.bytesLoaded, SystemClock.elapsedRealtime())
+            if (!fatal && decision is LoadErrorBudget.Decision.Retry) return decision.delayMs
             val message = describe(info.exception)
             main.post { fail(message) }
             return C.TIME_UNSET
@@ -99,6 +96,7 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
     override fun prepare(mediaItem: MediaItem) {
         // A failure posted for the previous item must not end this one.
         main.removeCallbacksAndMessages(null)
+        budget.reset()
         failed = false
         exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
