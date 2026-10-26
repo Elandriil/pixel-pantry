@@ -3,6 +3,10 @@ package app.pixelpantry.tv.ui.nav
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModelProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -14,10 +18,14 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.pixelpantry.tv.R
 import app.pixelpantry.tv.di.AppContainer
+import app.pixelpantry.tv.ui.components.ImageSource
+import app.pixelpantry.tv.ui.components.LocalImageSource
 import app.pixelpantry.tv.ui.components.SidebarEntry
 import app.pixelpantry.tv.ui.components.ToastHost
 import app.pixelpantry.tv.ui.connect.ConnectScreen
 import app.pixelpantry.tv.ui.connect.ConnectViewModel
+import app.pixelpantry.tv.ui.home.HomeScreen
+import app.pixelpantry.tv.ui.home.HomeViewModel
 
 object Routes {
     const val CONNECT = "connect"
@@ -70,40 +78,84 @@ private fun NavController.openSidebarEntry(entry: SidebarEntry) {
 @Composable
 fun NavGraph(container: AppContainer) {
     val nav = rememberNavController()
-    val rescanNotWired = stringResource(R.string.rescan_not_wired)
+    val context = LocalContext.current.applicationContext
+    val homeStrings = remember(context) {
+        HomeViewModel.Strings(
+            scanning = context.getString(R.string.home_scanning),
+            updated = context.getString(R.string.home_scan_done),
+            scanFailed = { context.getString(R.string.home_scan_failed, it) },
+        )
+    }
+    fun homeFactory(category: String) = HomeViewModel.Factory(container.api, category, container.toaster, homeStrings)
+
+    /** Off the browse pages, Rescan runs on the root Home page's view model (always at the bottom of the stack). */
+    fun rescanFromRootHome() {
+        val root = runCatching { nav.getBackStackEntry(Routes.HOME) }.getOrNull() ?: return
+        ViewModelProvider(root, homeFactory("home"))["home", HomeViewModel::class.java].rescan()
+    }
 
     @Composable
-    fun Shell(selected: SidebarEntry, content: @Composable () -> Unit) = AppShell(
-        selected = selected,
-        onSelect = { nav.openSidebarEntry(it) },
-        onRescan = { container.toaster.show(rescanNotWired) },
-        content = content,
-    )
+    fun Shell(selected: SidebarEntry, onRescan: () -> Unit = ::rescanFromRootHome, content: @Composable () -> Unit) =
+        AppShell(
+            selected = selected,
+            onSelect = { nav.openSidebarEntry(it) },
+            onRescan = onRescan,
+            content = content,
+        )
 
-    Box(Modifier.fillMaxSize()) {
-        NavHost(navController = nav, startDestination = Routes.CONNECT) {
-            composable(Routes.CONNECT) {
-                val vm: ConnectViewModel = viewModel(
-                    factory = ConnectViewModel.Factory(container.resolver, container.api, container.serverStore),
-                )
-                ConnectScreen(vm, onConnected = {
-                    nav.navigate(Routes.home("home")) { popUpTo(Routes.CONNECT) { inclusive = true } }
-                })
+    CompositionLocalProvider(LocalImageSource provides remember { ImageSource(container.imageLoader, container.api::resolve) }) {
+        Box(Modifier.fillMaxSize()) {
+            NavHost(navController = nav, startDestination = Routes.CONNECT) {
+                composable(Routes.CONNECT) {
+                    val vm: ConnectViewModel = viewModel(
+                        factory = ConnectViewModel.Factory(container.resolver, container.api, container.serverStore),
+                    )
+                    ConnectScreen(vm, onConnected = {
+                        nav.navigate(Routes.home("home")) { popUpTo(Routes.CONNECT) { inclusive = true } }
+                    })
+                }
+                composable(Routes.HOME, arguments = listOf(navArgument("category") { type = NavType.StringType })) { backStack ->
+                    val category = backStack.arguments?.getString("category").orEmpty()
+                    val vm: HomeViewModel = viewModel(key = category, factory = homeFactory(category))
+                    Shell(sidebarEntryFor(category), onRescan = vm::rescan) {
+                        HomeScreen(vm, onNavigate = { event ->
+                            nav.navigate(
+                                when (event) {
+                                    is HomeViewModel.NavEvent.Player -> Routes.player(event.itemId)
+                                    is HomeViewModel.NavEvent.Movie -> Routes.movie(event.itemId)
+                                    is HomeViewModel.NavEvent.Show -> Routes.show(event.showId)
+                                },
+                            )
+                        })
+                    }
+                }
+                composable(Routes.SEARCH) {
+                    Shell(SidebarEntry.SEARCH) { PlaceholderScreen(stringResource(R.string.nav_search)) }
+                }
+                composable(Routes.HISTORY) {
+                    Shell(SidebarEntry.HISTORY) { PlaceholderScreen(stringResource(R.string.nav_history)) }
+                }
+                composable(Routes.SETTINGS) {
+                    Shell(SidebarEntry.SETTINGS) { PlaceholderScreen(stringResource(R.string.nav_settings)) }
+                }
+                // Detail and player stand-ins until Tasks 7–8, so opening a card has somewhere to go.
+                composable(Routes.SHOW, arguments = listOf(navArgument("id") { type = NavType.IntType })) {
+                    PlaceholderScreen("Show ${it.arguments?.getInt("id")}")
+                }
+                composable(Routes.MOVIE, arguments = listOf(navArgument("id") { type = NavType.IntType })) {
+                    PlaceholderScreen("Movie ${it.arguments?.getInt("id")}")
+                }
+                composable(
+                    Routes.PLAYER,
+                    arguments = listOf(
+                        navArgument("itemId") { type = NavType.IntType },
+                        navArgument("fromStart") { type = NavType.BoolType; defaultValue = false },
+                    ),
+                ) {
+                    PlaceholderScreen("Player ${it.arguments?.getInt("itemId")}")
+                }
             }
-            composable(Routes.HOME, arguments = listOf(navArgument("category") { type = NavType.StringType })) { backStack ->
-                val entry = sidebarEntryFor(backStack.arguments?.getString("category").orEmpty())
-                Shell(entry) { PlaceholderScreen(stringResource(entry.label)) }
-            }
-            composable(Routes.SEARCH) {
-                Shell(SidebarEntry.SEARCH) { PlaceholderScreen(stringResource(R.string.nav_search)) }
-            }
-            composable(Routes.HISTORY) {
-                Shell(SidebarEntry.HISTORY) { PlaceholderScreen(stringResource(R.string.nav_history)) }
-            }
-            composable(Routes.SETTINGS) {
-                Shell(SidebarEntry.SETTINGS) { PlaceholderScreen(stringResource(R.string.nav_settings)) }
-            }
+            ToastHost(container.toaster)
         }
-        ToastHost(container.toaster)
     }
 }

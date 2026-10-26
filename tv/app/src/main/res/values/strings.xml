@@ -11,7 +11,6 @@
     <string name="nav_history">History</string>
     <string name="nav_rescan">Rescan</string>
     <string name="nav_settings">Settings</string>
-    <string name="rescan_not_wired">Rescan is not wired yet</string>
 
     <!-- Connect -->
     <string name="connect_looking">Looking for Pixel Pantry on your network…</string>
@@ -26,6 +25,22 @@
     <string name="connect_retry">Retry</string>
     <string name="connect_error_invalid">Enter host:port, e.g. 192.168.1.20:8765</string>
     <string name="connect_error_unreachable">Cannot reach %1$s</string>
+
+    <!-- Home -->
+    <string name="home_empty">No videos yet. Add files on the PC and press Rescan.</string>
+    <string name="home_rescan">Rescan</string>
+    <string name="home_error_title">Could not load</string>
+    <string name="home_retry">Retry</string>
+    <string name="home_scanning">Scanning…</string>
+    <string name="home_scan_done">Library updated</string>
+    <string name="home_scan_failed">Scan failed: %1$s</string>
+    <string name="hero_next">Next: %1$s</string>
+    <plurals name="hero_episodes">
+        <item quantity="one">%1$d episode</item>
+        <item quantity="other">%1$d episodes</item>
+    </plurals>
+    <string name="hero_unwatched">%1$d unwatched</string>
+    <string name="card_next">Next</string>
 
     <!-- Generic -->
     <string name="loading">Loading…</string>

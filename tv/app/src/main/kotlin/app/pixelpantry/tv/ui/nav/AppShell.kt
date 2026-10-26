@@ -15,6 +15,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.tv.material3.MaterialTheme
 import app.pixelpantry.tv.ui.components.Sidebar
 import app.pixelpantry.tv.ui.components.SidebarCollapsedWidth
@@ -23,7 +24,8 @@ import app.pixelpantry.tv.ui.components.SidebarEntry
 /**
  * A browse screen: the collapsed sidebar on the left, [content] beside it. The sidebar overlays the content when
  * it expands. Content gets focus when the screen opens and again after any sidebar entry is chosen; focus
- * coming back from the sidebar returns to the last focused content element.
+ * coming back from the sidebar returns to the last focused content element. Content may take focus itself on
+ * open; the shell then leaves it where it is.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -34,6 +36,8 @@ fun AppShell(
     content: @Composable () -> Unit,
 ) {
     val contentFocus = remember { FocusRequester() }
+    // Plain holder, not state: read only from the effect below, never during composition.
+    val contentHasFocus = remember { booleanArrayOf(false) }
     fun focusContent() = runCatching { contentFocus.requestFocus() }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -41,6 +45,7 @@ fun AppShell(
             Modifier
                 .fillMaxSize()
                 .padding(start = SidebarCollapsedWidth)
+                .onFocusChanged { contentHasFocus[0] = it.hasFocus }
                 .focusRequester(contentFocus)
                 .focusRestorer()
                 // Only LEFT may leave the content (into the sidebar); UP/DOWN/RIGHT at the edges stay put.
@@ -57,5 +62,6 @@ fun AppShell(
             onRescan = { onRescan(); focusContent() },
         )
     }
-    LaunchedEffect(Unit) { focusContent() }
+    // Content that focuses a specific element itself when it opens (e.g. restoring the last focused card) wins.
+    LaunchedEffect(Unit) { if (!contentHasFocus[0]) focusContent() }
 }
