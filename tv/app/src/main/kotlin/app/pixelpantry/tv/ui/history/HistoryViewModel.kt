@@ -101,6 +101,8 @@ class HistoryViewModel(
     }
 
     private suspend fun fetch() {
+        // Restored after process death before any server was resolved: resolve first.
+        if (api.baseUrl.isBlank()) reconnect()
         try {
             _state.value = coroutineScope {
                 val history = async { api.history() }

@@ -247,6 +247,8 @@ class PlayerViewModel(
     private fun load(beforeFetch: suspend () -> Unit = {}) {
         loadJob = viewModelScope.launch {
             beforeFetch()
+            // Restored after process death before any server was resolved: resolve first.
+            if (api.baseUrl.isBlank()) reconnect()
             val d = try {
                 api.item(itemId)
             } catch (e: ApiException) {

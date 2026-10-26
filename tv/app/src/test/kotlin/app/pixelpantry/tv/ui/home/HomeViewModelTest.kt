@@ -214,6 +214,17 @@ class HomeViewModelTest {
         assertEquals("the initial load does not resolve", 0, reconnects.get())
     }
 
+    @Test fun aFirstLoadWithoutAServerAddressResolvesFirst() = runTest {
+        // Restored after process death before the connect screen ran (I6).
+        val live = api.baseUrl
+        api.baseUrl = ""
+        onReconnect = { api.baseUrl = live }
+        val vm = newVm()
+        val loaded = vm.loaded()
+        assertEquals(1, reconnects.get())
+        assertEquals(listOf("continue", "recent"), loaded.rows.map { it.key })
+    }
+
     @Test fun retryReconnectsOnceThenReloads() = runTest {
         val live = api.baseUrl
         api.baseUrl = deadUrl

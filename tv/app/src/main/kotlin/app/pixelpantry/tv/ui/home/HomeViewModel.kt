@@ -114,6 +114,8 @@ class HomeViewModel(
 
     /** Loads the page into [state]; keeps the focused card when it is still on the page. True when it loaded. */
     private suspend fun fetch(): Boolean = try {
+        // Restored after process death before any server was resolved: resolve first.
+        if (api.baseUrl.isBlank()) reconnect()
         val page = if (category == "home") api.home() else api.category(category)
         val rows = page.rows.filter { it.cards.isNotEmpty() }
         val cards = rows.flatMap { it.cards }

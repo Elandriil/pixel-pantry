@@ -25,16 +25,24 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 
 private val Application.pantryDataStore: DataStore<Preferences> by preferencesDataStore(name = "pantry")
 
-class AppContainer(private val app: Application) {
+/** [dataStoreOverride]: tests only; the app uses its `pantry` preferences file. */
+class AppContainer(private val app: Application, private val dataStoreOverride: DataStore<Preferences>? = null) {
     val okHttp: OkHttpClient by lazy { ApiClient.defaultHttpClient() }
     val json: Json get() = ApiClient.defaultJson
-    val api: ApiClient by lazy { ApiClient(okHttp, json) }
-    val dataStore: DataStore<Preferences> get() = app.pantryDataStore
+
+    /**
+     * Starts on the stored server address, so a page restored after process death (which skips the connect
+     * screen) has a server to ask; the connect screen and Retry switch it as usual.
+     */
+    val api: ApiClient by lazy { ApiClient(okHttp, json).also { it.baseUrl = storedBaseUrl(serverStore) } }
+    val dataStore: DataStore<Preferences> get() = dataStoreOverride ?: app.pantryDataStore
     val serverStore: ServerStore by lazy { ServerStore(dataStore) }
     val discovery: NsdDiscovery by lazy { NsdDiscovery(app) }
     val resolver: ServerResolver by lazy { ServerResolver(serverStore, discovery, ServerResolver.apiProbe(api)) }
@@ -130,6 +138,16 @@ class AppContainer(private val app: Application) {
     /** One reporter per playback screen. */
     fun progressReporter(): ProgressReporter =
         ProgressReporter(api, clock = SystemClock::elapsedRealtime, onError = { Log.w("ProgressReporter", it) })
+
+    companion object {
+        /**
+         * `http://` + the stored manual address, else the last known one; "" when there is none or the store
+         * cannot be read. One blocking read, at startup.
+         */
+        internal fun storedBaseUrl(store: ServerStore): String = runCatching {
+            runBlocking { store.manualAddress.first()?.takeIf { it.isNotBlank() } ?: store.lastKnownAddress.first() }
+        }.getOrNull()?.takeIf { it.isNotBlank() }?.let { "http://$it" } ?: ""
+    }
 
     val settingsRepo: SettingsRepo by lazy { SettingsRepo(api, serverStore, scope) }
     val imageLoader: ImageLoader by lazy {
