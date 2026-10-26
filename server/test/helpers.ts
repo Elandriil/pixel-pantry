@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ProbeResult } from "../src/library/probe";
+import type { Repo } from "../src/library/repo";
 import type { TmdbMovieDetails, TmdbSearchResult, TmdbSeason, TmdbTvDetails } from "../src/metadata/tmdb";
+import type { Category } from "../src/types";
 
 const created: string[] = [];
 
@@ -70,4 +72,53 @@ export function fakeProbe() {
     return { duration: 1200, audio: [], subtitles: [], video: null };
   };
   return { probe, calls, failOn };
+}
+
+const SEED_NOW = 1_600_000_000_000;
+
+function attachFile(repo: Repo, itemId: number, relPath: string, category: string): void {
+  const fileId = repo.upsertFile({
+    rel_path: relPath, category, size: 10, mtime: SEED_NOW, parsed: null, item_id: null, duration: 1200,
+    audio_tracks: null, subtitle_tracks: null, probe_error: null, added_at: SEED_NOW, deleted_at: null,
+  });
+  repo.setFileItem(fileId, itemId);
+}
+
+/**
+ * Seeds a show with one live file per episode. `seasons[i]` lists the episode numbers of season `i + 1`.
+ * Returns `itemIds[i][j]` = id of season `i + 1`, episode `seasons[i][j]`.
+ */
+export function seedShow(
+  repo: Repo,
+  opts: { title: string; category: Category; seasons: number[][] },
+): { showId: number; itemIds: number[][] } {
+  const key = `${opts.category}:${opts.title.toLowerCase()}`;
+  const showId = repo.insertShow(
+    { category: opts.category, parsed_key: key, parsed_title: opts.title, title: opts.title }, SEED_NOW,
+  );
+  const itemIds = opts.seasons.map((episodes, i) =>
+    episodes.map((ep) => {
+      const season = i + 1;
+      const itemId = repo.insertItem(
+        {
+          type: "episode", category: opts.category, show_id: showId, season_number: season, episode_number: ep,
+          parsed_title: opts.title, title: `${opts.title} S${season}E${ep}`,
+        },
+        SEED_NOW,
+      );
+      attachFile(repo, itemId, `${opts.category}/${opts.title}/S${season}E${ep}.mkv`, opts.category);
+      return itemId;
+    }),
+  );
+  return { showId, itemIds };
+}
+
+/** Seeds a movie (category `movies`) with one live file. Returns the item id. */
+export function seedMovie(repo: Repo, title: string): number {
+  const itemId = repo.insertItem(
+    { type: "movie", category: "movies", parsed_key: `movie:${title.toLowerCase()}`, parsed_title: title, title },
+    SEED_NOW,
+  );
+  attachFile(repo, itemId, `movies/${title}.mkv`, "movies");
+  return itemId;
 }
