@@ -1,4 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Pixel Pantry</string>
+
+    <!-- Sidebar -->
+    <string name="nav_home">Home</string>
+    <string name="nav_tv">TV Shows</string>
+    <string name="nav_anime">Anime</string>
+    <string name="nav_movies">Movies</string>
+    <string name="nav_search">Search</string>
+    <string name="nav_history">History</string>
+    <string name="nav_rescan">Rescan</string>
+    <string name="nav_settings">Settings</string>
+    <string name="rescan_not_wired">Rescan is not wired yet</string>
+
+    <!-- Connect -->
+    <string name="connect_looking">Looking for Pixel Pantry on your network…</string>
+    <string name="connect_trying">Trying %1$s</string>
+    <string name="connect_not_found">Could not find the server</string>
+    <string name="connect_tried">Addresses tried:</string>
+    <string name="connect_tried_none">No Pixel Pantry server announced itself on the network.</string>
+    <string name="connect_tried_item">• %1$s</string>
+    <string name="connect_address_label">Server address (host:port)</string>
+    <string name="connect_address_hint">e.g. 192.168.1.20:8765</string>
+    <string name="connect_connect">Connect</string>
+    <string name="connect_retry">Retry</string>
+    <string name="connect_error_invalid">Enter host:port, e.g. 192.168.1.20:8765</string>
+    <string name="connect_error_unreachable">Cannot reach %1$s</string>
+
+    <!-- Generic -->
+    <string name="loading">Loading…</string>
 </resources>

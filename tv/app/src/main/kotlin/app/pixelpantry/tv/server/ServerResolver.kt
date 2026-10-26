@@ -6,11 +6,16 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** Finds the Pixel Pantry server; the seam the connect screen depends on. */
+fun interface ServerLocator {
+    suspend fun resolve(): ServerResolver.Result
+}
+
 class ServerResolver(
     private val store: ServerStore,
     private val discovery: Discovery,
     private val probe: suspend (baseUrl: String) -> Boolean,
-) {
+) : ServerLocator {
     enum class Source { MANUAL, LAST_KNOWN, MDNS }
 
     sealed class Result {
@@ -23,7 +28,7 @@ class ServerResolver(
         return found
     }
 
-    suspend fun resolve(): Result {
+    override suspend fun resolve(): Result {
         val tried = mutableListOf<String>()
 
         suspend fun attempt(address: String, source: Source): Result.Found? {

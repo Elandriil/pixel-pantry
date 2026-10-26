@@ -9,6 +9,7 @@ import app.pixelpantry.tv.server.NsdDiscovery
 import app.pixelpantry.tv.server.ServerResolver
 import app.pixelpantry.tv.server.ServerStore
 import app.pixelpantry.tv.settings.SettingsRepo
+import app.pixelpantry.tv.ui.components.Toaster
 import coil.ImageLoader
 import coil.disk.DiskCache
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +29,7 @@ class AppContainer(private val app: Application) {
     val discovery: NsdDiscovery by lazy { NsdDiscovery(app) }
     val resolver: ServerResolver by lazy { ServerResolver(serverStore, discovery, ServerResolver.apiProbe(api)) }
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val toaster = Toaster(scope)
     val settingsRepo: SettingsRepo by lazy { SettingsRepo(api, serverStore, scope) }
     val imageLoader: ImageLoader by lazy {
         ImageLoader.Builder(app)
