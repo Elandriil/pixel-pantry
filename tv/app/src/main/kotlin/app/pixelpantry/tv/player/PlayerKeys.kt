@@ -39,6 +39,9 @@ sealed class PlayerAction {
     data object PassThrough : PlayerAction()
 }
 
+/** Which overlay element takes focus when the overlay appears (or the root, when it hides). */
+enum class OverlayFocusTarget { Root, SeekBar, Next, Pause }
+
 /**
  * The player's remote mapping (spec "Remote mapping in the player"). Pure: the screen turns Compose key events
  * into [KeyEventLike] and dispatches the result.
@@ -134,6 +137,18 @@ object PlayerKeys {
         KeyCode.DPAD_RIGHT -> PlayerAction.SkipForward
         KeyCode.DPAD_CENTER, KeyCode.ENTER -> PlayerAction.TogglePause
         else -> PlayerAction.PassThrough // UP/DOWN/MENU move focus
+    }
+
+    /**
+     * Focus when the overlay's visibility or the end state changes: the seek bar whenever the overlay opens
+     * (OK to pause, UP/DOWN, a skip), so LEFT/RIGHT keep skipping and DOWN reaches the buttons; at the end of an
+     * item (ended or counting down) Next episode, or Pause (replay) when there is no next one.
+     */
+    fun focusTarget(overlayVisible: Boolean, atEnd: Boolean, hasNext: Boolean): OverlayFocusTarget = when {
+        !overlayVisible -> OverlayFocusTarget.Root
+        atEnd && hasNext -> OverlayFocusTarget.Next
+        atEnd -> OverlayFocusTarget.Pause
+        else -> OverlayFocusTarget.SeekBar
     }
 
     private val REPEATABLE = setOf(PlayerAction.SkipBack, PlayerAction.SkipForward, PlayerAction.PassThrough)

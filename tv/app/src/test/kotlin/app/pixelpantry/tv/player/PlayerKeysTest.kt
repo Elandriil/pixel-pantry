@@ -222,4 +222,33 @@ class PlayerKeysTest {
         assertEquals(PlayerAction.PassThrough, inMenu(down(DPAD_DOWN, repeat = 3)))
         assertNull(inMenu(down(BACK, repeat = 1)))
     }
+
+    // Overlay focus (I2): the seek bar takes focus whenever the overlay opens
+
+    @Test fun overlayOpeningFocusesTheSeekBar() {
+        assertEquals(OverlayFocusTarget.SeekBar, PlayerKeys.focusTarget(overlayVisible = true, atEnd = false, hasNext = true))
+        assertEquals(OverlayFocusTarget.SeekBar, PlayerKeys.focusTarget(overlayVisible = true, atEnd = false, hasNext = false))
+    }
+
+    @Test fun atTheEndNextEpisodeOrReplayTakesFocus() {
+        assertEquals(OverlayFocusTarget.Next, PlayerKeys.focusTarget(overlayVisible = true, atEnd = true, hasNext = true))
+        assertEquals(OverlayFocusTarget.Pause, PlayerKeys.focusTarget(overlayVisible = true, atEnd = true, hasNext = false))
+    }
+
+    @Test fun hiddenOverlayFocusesTheRoot() =
+        assertEquals(OverlayFocusTarget.Root, PlayerKeys.focusTarget(overlayVisible = false, atEnd = false, hasNext = true))
+
+    @Test fun okToPauseThenRightSkipsThenOkResumes() {
+        // OK with the overlay hidden pauses (and shows the overlay) ...
+        assertEquals(PlayerAction.TogglePause, hidden(down(DPAD_CENTER)))
+        // ... which focuses the seek bar, not a button ...
+        val target = PlayerKeys.focusTarget(overlayVisible = true, atEnd = false, hasNext = true)
+        val onButton = target != OverlayFocusTarget.SeekBar
+        fun visible(key: KeyEventLike) = PlayerKeys.map(key, overlayVisible = true, focusOnOverlay = onButton, countdownActive = false)
+        // ... so RIGHT skips and OK resumes.
+        assertEquals(PlayerAction.SkipForward, visible(down(DPAD_RIGHT)))
+        assertEquals(PlayerAction.TogglePause, visible(down(DPAD_CENTER)))
+        // DOWN moves focus to the buttons row.
+        assertEquals(PlayerAction.PassThrough, visible(down(DPAD_DOWN)))
+    }
 }

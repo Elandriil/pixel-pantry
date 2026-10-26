@@ -127,14 +127,8 @@ fun PlayerScreen(vm: PlayerViewModel, onExit: () -> Unit, onChangeServer: () -> 
 
 /** Overlay focus as the key handling needs it. */
 private class OverlayFocus {
-    /**
-     * A button of the overlay has focus. Otherwise the seek bar has it, or is about to: right after a skip
-     * shows the overlay, the next LEFT/RIGHT may arrive before focus has moved, and must skip too.
-     */
+    /** A button of the overlay has focus. Otherwise the seek bar has it, or is about to (it takes focus on show). */
     var onButton = false
-
-    /** The next time the overlay appears, focus goes to the seek bar (after a skip) instead of Pause. */
-    var seekBarOnShow = false
 }
 
 /**
@@ -150,8 +144,6 @@ private fun onKey(key: KeyEventLike, s: UiState, countdownActive: Boolean, focus
     val onButton = s.overlayVisible && focus.onButton
     val menuOpen = s.menu != null
     val action = PlayerKeys.map(key, s.overlayVisible, onButton, countdownActive, menuOpen)
-    // Skipping keeps focus on the seek bar, so further LEFT/RIGHT keep skipping.
-    if (action == PlayerAction.SkipBack || action == PlayerAction.SkipForward) focus.seekBarOnShow = true
     action?.let(vm::onAction)
     return PlayerKeys.consumes(key, s.overlayVisible, onButton, countdownActive, menuOpen)
 }
@@ -263,18 +255,17 @@ private fun Playback(
         }
     }
 
-    // The overlay's Pause button (the seek bar, after a skip) takes focus when it appears; the root takes it
-    // back when it hides. At the end of an item (countdown running or not), Next episode takes it (Pause, i.e.
-    // replay, without a next one).
+    // The seek bar takes focus whenever the overlay appears (LEFT/RIGHT skip, DOWN reaches the buttons); the
+    // root takes it back when it hides. At the end of an item (countdown running or not), Next episode takes it
+    // (Pause, i.e. replay, without a next one). See PlayerKeys.focusTarget.
     val atEnd = state.ended
     LaunchedEffect(state.overlayVisible, atEnd) {
-        val target = when {
-            !state.overlayVisible -> rootFocus
-            atEnd && state.detail.next != null -> nextFocus
-            focus.seekBarOnShow -> seekBarFocus
-            else -> pauseFocus
+        val target = when (PlayerKeys.focusTarget(state.overlayVisible, atEnd, state.detail.next != null)) {
+            OverlayFocusTarget.Root -> rootFocus
+            OverlayFocusTarget.Next -> nextFocus
+            OverlayFocusTarget.Pause -> pauseFocus
+            OverlayFocusTarget.SeekBar -> seekBarFocus
         }
-        focus.seekBarOnShow = false
         if (!state.overlayVisible) focus.onButton = false
         runCatching { target.requestFocus() }
     }
