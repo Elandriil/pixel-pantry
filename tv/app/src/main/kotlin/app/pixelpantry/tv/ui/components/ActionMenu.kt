@@ -28,13 +28,15 @@ data class MenuItem(val label: String, val onClick: () -> Unit)
 
 /**
  * A short list of actions in a panel at the centre-right of the screen, over a dimmed page. The first item has
- * focus; BACK dismisses. Choosing an item dismisses the menu, then runs the item.
+ * focus; BACK dismisses. Choosing an item dismisses the menu, then runs the item. The OK press (or long-press)
+ * that opened the menu never chooses an item, see [MenuArmGate].
  */
 @Composable
 fun ActionMenu(items: List<MenuItem>, onDismiss: () -> Unit) {
     val first = remember { FocusRequester() }
+    val gate = remember { MenuArmGate() }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().padding(end = 96.dp), contentAlignment = Alignment.CenterEnd) {
+        Box(Modifier.fillMaxSize().menuArmGate(gate).padding(end = 96.dp), contentAlignment = Alignment.CenterEnd) {
             Surface(
                 modifier = Modifier.width(360.dp),
                 shape = RoundedCornerShape(16.dp),

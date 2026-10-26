@@ -26,7 +26,7 @@ import app.pixelpantry.tv.R
 
 /**
  * A centred yes/no question for destructive actions. Cancel has focus by default so a stray OK does nothing
- * harmful; BACK cancels.
+ * harmful; BACK cancels. The press that opened the dialog does not act in it, see [MenuArmGate].
  */
 @Composable
 fun ConfirmDialog(
@@ -37,8 +37,9 @@ fun ConfirmDialog(
     onCancel: () -> Unit,
 ) {
     val cancelFocus = remember { FocusRequester() }
+    val gate = remember { MenuArmGate() }
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxSize().menuArmGate(gate), contentAlignment = Alignment.Center) {
             Surface(
                 modifier = Modifier.widthIn(max = 640.dp),
                 shape = RoundedCornerShape(16.dp),
