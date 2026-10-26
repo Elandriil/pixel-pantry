@@ -16,7 +16,10 @@ import androidx.tv.material3.Text
 
 val PosterCardWidth = 160.dp
 
-/** A 2:3 poster (shows and movies) with the title below. [modifier] targets the focusable card itself. */
+/**
+ * A 2:3 poster (shows and movies) with the title below. Long-press OK or MENU call [onLongClick]. [modifier]
+ * targets the focusable card itself.
+ */
 @Composable
 fun PosterCard(
     title: String,
@@ -29,7 +32,7 @@ fun PosterCard(
         Card(
             onClick = onClick,
             onLongClick = onLongClick,
-            modifier = modifier.fillMaxWidth().aspectRatio(2f / 3f),
+            modifier = modifier.fillMaxWidth().aspectRatio(2f / 3f).menuKey(onLongClick),
             shape = CardStyle.shape,
             scale = CardStyle.scale,
             border = CardStyle.border,

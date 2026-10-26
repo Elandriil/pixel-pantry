@@ -29,7 +29,8 @@ val LandscapeCardWidth = 280.dp
 
 /**
  * A 16:9 continue-watching card: episode still (or the backdrop), episode tag, progress bar, and below it the
- * show title with "23 min left" or "Next" ([reason] is the server's `resume` / `next`).
+ * show title with "23 min left" or "Next" ([reason] is the server's `resume` / `next`). Long-press OK or MENU
+ * call [onLongClick].
  */
 @Composable
 fun LandscapeCard(
@@ -51,7 +52,7 @@ fun LandscapeCard(
         Card(
             onClick = onClick,
             onLongClick = onLongClick,
-            modifier = modifier.fillMaxWidth().aspectRatio(16f / 9f),
+            modifier = modifier.fillMaxWidth().aspectRatio(16f / 9f).menuKey(onLongClick),
             shape = CardStyle.shape,
             scale = CardStyle.scale,
             border = CardStyle.border,

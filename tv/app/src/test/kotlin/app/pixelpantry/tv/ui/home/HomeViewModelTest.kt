@@ -3,6 +3,7 @@ package app.pixelpantry.tv.ui.home
 import app.pixelpantry.tv.api.ApiClient
 import app.pixelpantry.tv.library.LibraryScanner
 import app.pixelpantry.tv.ui.components.Toaster
+import app.pixelpantry.tv.ui.components.key
 import app.pixelpantry.tv.ui.home.HomeViewModel.NavEvent
 import app.pixelpantry.tv.ui.home.HomeViewModel.UiState
 import kotlinx.coroutines.CoroutineScope
@@ -49,6 +50,8 @@ class HomeViewModelTest {
     private var scanStates = listOf("scanning", "idle")
     private var lastError: String? = null
     private var homeBody: () -> MockResponse = { json(homeFixture) }
+    private var writeReply: () -> MockResponse = { json("""{"ok":true,"trashed":["a.mkv"]}""") }
+    private val writeBodies = ConcurrentLinkedQueue<String>()
 
     private val strings = LibraryScanner.Strings(
         scanning = "Scanning…",
@@ -62,8 +65,12 @@ class HomeViewModelTest {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 requests += "${request.method} ${request.path}"
+                writeBodies += request.body.readUtf8()
                 return when (request.path) {
                     "/api/home" -> { homeLoads.incrementAndGet(); homeBody() }
+                    "/api/shows/1/watched", "/api/items/20/watched" -> writeReply()
+                    "/api/shows/1" -> if (request.method == "DELETE") writeReply() else json(showDetail)
+                    "/api/movies/20" -> writeReply()
                     "/api/categories/tv" -> json(tvFixture)
                     "/api/scan" -> json("""{"status":${status("scanning")}}""").setResponseCode(202)
                     "/api/scan/status" -> {
@@ -104,7 +111,7 @@ class HomeViewModelTest {
 
     private fun TestScope.newVm(category: String = "home", scanner: LibraryScanner = scanner()): HomeViewModel {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { toaster.current.filterNotNull().collect { toasts += it } }
-        return HomeViewModel(api, category, scanner, toaster, couldNotRefresh = "Could not refresh") {
+        return HomeViewModel(api, category, scanner, toaster, couldNotRefresh = "Could not refresh", movedToRecycleBin = "Moved to Recycle Bin") {
             reconnects.incrementAndGet()
             onReconnect()
         }
@@ -290,7 +297,84 @@ class HomeViewModelTest {
         assertEquals(before, vm.state.value)
     }
 
+    // Card menu (I3)
+
+    private fun card(vm: HomeViewModel, key: String) =
+        (vm.state.value as UiState.Loaded).rows.flatMap { it.cards }.first { it.key() == key }
+
+    @Test fun menuTargetsAreTheShowTheMovieOrAnEpisodesShow() = runTest {
+        val vm = newVm()
+        vm.loaded()
+        assertEquals(HomeViewModel.CardTarget.Show(1, "Severance", watched = false), vm.menuTarget(card(vm, "show:1")))
+        assertEquals(HomeViewModel.CardTarget.Movie(20, "Heat", watched = false), vm.menuTarget(card(vm, "item:20")))
+        assertEquals(HomeViewModel.CardTarget.Show(1, "Severance", watched = false), vm.menuTarget(card(vm, "item:7")))
+    }
+
+    @Test fun markShowWatchedPostsThenReloads() = runTest {
+        val vm = newVm()
+        vm.loaded()
+        vm.markShowWatched(1, watched = true)
+        awaitRealTime { homeLoads.get() == 2 }
+        assertTrue("POST /api/shows/1/watched" in requests)
+        assertTrue(writeBodies.any { it.contains("\"watched\":true") })
+    }
+
+    @Test fun markMovieWatchedPostsThenReloads() = runTest {
+        val vm = newVm()
+        vm.loaded()
+        vm.markMovieWatched(20, watched = false)
+        awaitRealTime { homeLoads.get() == 2 }
+        assertTrue("POST /api/items/20/watched" in requests)
+        assertTrue(writeBodies.any { it.contains("\"watched\":false") })
+    }
+
+    @Test fun deletingAShowAsksWithItsFileCountThenDeletesAndReloads() = runTest {
+        val vm = newVm()
+        vm.loaded()
+        val target = HomeViewModel.CardTarget.Show(1, "Severance", watched = false)
+        vm.requestDelete(target)
+        assertEquals(HomeViewModel.DeleteConfirm(target, fileCount = 9), vm.deleteConfirm.first { it != null })
+        vm.confirmDelete()
+        assertEquals(null, vm.deleteConfirm.value)
+        awaitRealTime { homeLoads.get() == 2 }
+        assertTrue("DELETE /api/shows/1" in requests)
+        awaitRealTime { "Moved to Recycle Bin" in toasts }
+    }
+
+    @Test fun deletingAMovieAsksForOneFileThenDeletesAndReloads() = runTest {
+        val vm = newVm()
+        vm.loaded()
+        val target = HomeViewModel.CardTarget.Movie(20, "Heat", watched = false)
+        vm.requestDelete(target)
+        assertEquals(HomeViewModel.DeleteConfirm(target, fileCount = 1), vm.deleteConfirm.value)
+        vm.confirmDelete()
+        awaitRealTime { homeLoads.get() == 2 }
+        assertTrue("DELETE /api/movies/20" in requests)
+    }
+
+    @Test fun cancellingADeleteDeletesNothing() = runTest {
+        val vm = newVm()
+        vm.loaded()
+        vm.requestDelete(HomeViewModel.CardTarget.Movie(20, "Heat", watched = false))
+        vm.cancelDelete()
+        vm.confirmDelete()
+        withContext(Dispatchers.Default) { delay(200) }
+        assertTrue(requests.none { it.startsWith("DELETE") })
+    }
+
+    @Test fun aFailedCardActionToastsAndDoesNotReload() = runTest {
+        val vm = newVm()
+        vm.loaded()
+        writeReply = { json("""{"error":"File is in use"}""").setResponseCode(409) }
+        vm.deleteMovie(20)
+        awaitRealTime { "File is in use" in toasts }
+        withContext(Dispatchers.Default) { delay(200) }
+        assertEquals(1, homeLoads.get())
+    }
+
     private companion object {
+        val showDetail = """{"show":{"id":1,"category":"tv","title":"Severance","episodeCount":9,"addedAt":5},"seasons":[],"fileCount":9}"""
+
         val episode = """{"id":7,"type":"episode","category":"tv","title":"Pilot","showId":1,"showTitle":"Severance","season":1,"episode":1,"runtime":3000,"still":"/api/images/w500/s.jpg","progress":{"position":1620,"duration":3000,"watched":false},"addedAt":5}"""
         val show = """{"id":1,"category":"tv","title":"Severance","year":2022,"poster":"/api/images/w500/p.jpg","backdrop":"/api/images/w1280/b.jpg","episodeCount":9,"unwatchedCount":8,"matched":true,"addedAt":5}"""
         val movie = """{"id":20,"type":"movie","category":"movies","title":"Heat","year":1995,"runtime":10200,"addedAt":4}"""

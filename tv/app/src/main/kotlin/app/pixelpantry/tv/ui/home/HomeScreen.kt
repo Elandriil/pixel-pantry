@@ -5,13 +5,13 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -36,8 +37,14 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import app.pixelpantry.tv.R
 import app.pixelpantry.tv.api.Card
+import app.pixelpantry.tv.ui.components.ActionMenu
 import app.pixelpantry.tv.ui.components.ButtonSpec
+import app.pixelpantry.tv.ui.components.CardGridRow
 import app.pixelpantry.tv.ui.components.CardRow
+import app.pixelpantry.tv.ui.components.CardRowTitle
+import app.pixelpantry.tv.ui.components.ConfirmDialog
+import app.pixelpantry.tv.ui.components.MenuItem
+import app.pixelpantry.tv.ui.components.posterGridColumns
 import app.pixelpantry.tv.ui.components.ErrorScreen
 import app.pixelpantry.tv.ui.components.FocusableButton
 import app.pixelpantry.tv.ui.components.HeroStrip
@@ -54,7 +61,6 @@ fun HomeScreen(
     vm: HomeViewModel,
     onNavigate: (NavEvent) -> Unit,
     onChangeServer: () -> Unit,
-    onCardLongClick: (Card) -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(vm) { vm.navEvents.collect(onNavigate) }
@@ -71,8 +77,44 @@ fun HomeScreen(
         is UiState.Unreachable -> UnreachableScreen(s.baseUrl, onRetry = vm::retry, onChangeServer = onChangeServer)
         is UiState.Loaded ->
             if (s.rows.isEmpty()) EmptyLibrary(onRescan = vm::rescan)
-            else Rows(s, onFocus = vm::onFocus, onClick = vm::open, onLongClick = onCardLongClick)
+            else {
+                var menu by remember { mutableStateOf<HomeViewModel.CardTarget?>(null) }
+                Rows(s, onFocus = vm::onFocus, onClick = vm::open, onLongClick = { card -> vm.menuTarget(card)?.let { menu = it } })
+                menu?.let { target -> CardMenu(target, vm, onDismiss = { menu = null }) }
+                DeleteDialog(vm)
+            }
     }
+}
+
+/** Long-press OK / MENU on a card: mark the whole show (or the movie) watched or unwatched, or delete it. */
+@Composable
+private fun CardMenu(target: HomeViewModel.CardTarget, vm: HomeViewModel, onDismiss: () -> Unit) {
+    val mark = when (target) {
+        is HomeViewModel.CardTarget.Show -> MenuItem(
+            stringResource(if (target.watched) R.string.menu_mark_show_unwatched else R.string.menu_mark_show_watched),
+        ) { vm.markShowWatched(target.id, !target.watched) }
+        is HomeViewModel.CardTarget.Movie -> MenuItem(
+            stringResource(if (target.watched) R.string.menu_mark_unwatched else R.string.menu_mark_watched),
+        ) { vm.markMovieWatched(target.id, !target.watched) }
+    }
+    ActionMenu(
+        items = listOf(mark, MenuItem(stringResource(R.string.menu_delete_from_pc)) { vm.requestDelete(target) }),
+        onDismiss = onDismiss,
+    )
+}
+
+/** The delete confirmation, with the same copy as the show page. */
+@Composable
+private fun DeleteDialog(vm: HomeViewModel) {
+    val confirm by vm.deleteConfirm.collectAsStateWithLifecycle()
+    val c = confirm ?: return
+    ConfirmDialog(
+        title = stringResource(R.string.delete_title, c.target.title),
+        body = pluralStringResource(R.plurals.delete_body, c.fileCount, c.fileCount),
+        confirmLabel = stringResource(R.string.dialog_delete),
+        onConfirm = vm::confirmDelete,
+        onCancel = vm::cancelDelete,
+    )
 }
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
@@ -103,28 +145,56 @@ private fun Rows(
     ) {
         HeroStrip(state.focused, Modifier.fillMaxWidth().fillMaxHeight(0.4f))
         CompositionLocalProvider(LocalBringIntoViewSpec provides rememberRowsBringIntoViewSpec()) {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                contentPadding = PaddingValues(bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(state.rows, key = { it.key }) { row ->
-                    CardRow(
-                        title = row.title,
-                        cards = row.cards,
-                        onFocus = { card -> savedRow = row.key; onFocus(card) },
-                        onClick = onClick,
-                        onLongClick = onLongClick,
-                        landscape = row.key == "continue",
-                        focusKey = focusedKey.takeIf { row.key == focusedRow },
-                        focusRequester = lastFocused,
-                    )
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                val columns = posterGridColumns(maxWidth)
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 32.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    state.rows.forEach { row ->
+                        if (row.key == ALL_ROW) {
+                            // "All (A–Z)" is a vertical poster grid (spec): the title, then lines of posters.
+                            // The title shares the first line's item, so that line scrolls into view like a row.
+                            row.cards.chunked(columns).forEachIndexed { i, line ->
+                                item(key = "$ALL_ROW:${line.first().key()}") {
+                                    Column {
+                                        if (i == 0) CardRowTitle(row.title)
+                                        CardGridRow(
+                                            cards = line,
+                                            onFocus = { card -> savedRow = row.key; onFocus(card) },
+                                            onClick = onClick,
+                                            onLongClick = onLongClick,
+                                            focusKey = focusedKey.takeIf { row.key == focusedRow },
+                                            focusRequester = lastFocused,
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            item(key = row.key) {
+                                CardRow(
+                                    title = row.title,
+                                    cards = row.cards,
+                                    onFocus = { card -> savedRow = row.key; onFocus(card) },
+                                    onClick = onClick,
+                                    onLongClick = onLongClick,
+                                    landscape = row.key == "continue",
+                                    focusKey = focusedKey.takeIf { row.key == focusedRow },
+                                    focusRequester = lastFocused,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
     }
     LaunchedEffect(Unit) { runCatching { lastFocused.requestFocus() } }
 }
+
+/** The server's key for the "All (A–Z)" row. */
+private const val ALL_ROW = "all"
 
 @Composable
 private fun EmptyLibrary(onRescan: () -> Unit) {

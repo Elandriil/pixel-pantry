@@ -31,6 +31,13 @@ import app.pixelpantry.tv.util.formatRuntime
 
 val EpisodeCardWidth = 280.dp
 
+/** The remote's MENU key on a card does what long-press OK does: [onMenu] (on release). */
+fun Modifier.menuKey(onMenu: () -> Unit): Modifier = onPreviewKeyEvent {
+    val menu = it.key.nativeKeyCode == KeyEvent.KEYCODE_MENU
+    if (menu && it.type == KeyEventType.KeyUp) onMenu()
+    menu
+}
+
 /**
  * A 16:9 episode still with `N. Title` and the runtime below; a ✓ badge when watched and a progress bar when in
  * progress. OK calls [onClick]; long-press OK or the remote's MENU key call [onLongClick] (the episode menu).
@@ -53,11 +60,7 @@ fun EpisodeCard(
             modifier = modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
-                .onPreviewKeyEvent {
-                    val menu = it.key.nativeKeyCode == KeyEvent.KEYCODE_MENU
-                    if (menu && it.type == KeyEventType.KeyUp) onLongClick()
-                    menu
-                },
+                .menuKey(onLongClick),
             shape = CardStyle.shape,
             scale = CardStyle.scale,
             border = CardStyle.border,

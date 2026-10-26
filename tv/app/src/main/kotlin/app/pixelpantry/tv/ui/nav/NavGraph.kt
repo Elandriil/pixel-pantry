@@ -102,7 +102,8 @@ private fun NavController.openSidebarEntry(entry: SidebarEntry) {
 fun NavGraph(container: AppContainer) {
     val nav = rememberNavController()
     fun homeFactory(category: String) = HomeViewModel.Factory(
-        container.api, category, container.libraryScanner, container.toaster, container.couldNotRefresh, container::reconnect,
+        container.api, category, container.libraryScanner, container.toaster, container.couldNotRefresh,
+        container.showStrings.movedToRecycleBin, container::reconnect,
     )
 
     /** An Unreachable screen's "Change server": the connect form over the current page (BACK returns to it). */

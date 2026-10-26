@@ -63,6 +63,60 @@ fun rememberRowsBringIntoViewSpec(): BringIntoViewSpec {
     }
 }
 
+/** A row's title, [CardRowHeaderHeight] minus the cards' top padding tall. */
+@Composable
+fun CardRowTitle(title: String, modifier: Modifier = Modifier) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onBackground,
+        modifier = modifier.height(CardRowHeaderHeight - RowVerticalPadding).padding(start = GridSideMargin),
+    )
+}
+
+private val GridSideMargin = 48.dp
+private val GridSpacing = 16.dp
+
+/** How many posters one grid line holds in [width]: [PosterCardWidth] each, 16 dp apart, 48 dp side margins (1–7). */
+fun posterGridColumns(width: androidx.compose.ui.unit.Dp): Int =
+    ((width - GridSideMargin * 2 + GridSpacing) / (PosterCardWidth + GridSpacing)).toInt().coerceIn(1, 7)
+
+/**
+ * One line of a poster grid (the "All" section): up to [posterGridColumns] posters, no scrolling, no pivot. The
+ * card whose key is [focusKey] gets [focusRequester]. UP/DOWN move between lines by plain focus search.
+ */
+@Composable
+fun CardGridRow(
+    cards: List<Card>,
+    onFocus: (Card) -> Unit,
+    onClick: (Card) -> Unit,
+    onLongClick: (Card) -> Unit,
+    modifier: Modifier = Modifier,
+    focusKey: String? = null,
+    focusRequester: FocusRequester? = null,
+) {
+    androidx.compose.foundation.layout.Row(
+        modifier.fillMaxWidth().padding(start = GridSideMargin, end = GridSideMargin, top = RowVerticalPadding, bottom = RowVerticalPadding),
+        horizontalArrangement = Arrangement.spacedBy(GridSpacing),
+    ) {
+        cards.forEach { card ->
+            androidx.compose.runtime.key(card.key()) {
+                val cardModifier = Modifier
+                    .onFocusChanged { if (it.hasFocus) onFocus(card) }
+                    .then(
+                        if (focusRequester != null && card.key() == focusKey) Modifier.focusRequester(focusRequester)
+                        else Modifier,
+                    )
+                val (name, poster) = when (card) {
+                    is Card.ShowCard -> card.show.title to card.show.poster
+                    is Card.ItemCard -> card.item.title to card.item.poster
+                }
+                PosterCard(name, poster, { onClick(card) }, { onLongClick(card) }, cardModifier)
+            }
+        }
+    }
+}
+
 /**
  * A titled horizontal row of cards. [landscape] renders item cards as [LandscapeCard] (continue watching);
  * otherwise every card is a [PosterCard]. The card whose key is [focusKey] gets [focusRequester], so the screen
@@ -83,12 +137,7 @@ fun CardRow(
     state: LazyListState = rememberLazyListState(),
 ) {
     Column(modifier) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.height(CardRowHeaderHeight - RowVerticalPadding).padding(start = 48.dp),
-        )
+        CardRowTitle(title)
         CompositionLocalProvider(LocalBringIntoViewSpec provides PivotBringIntoViewSpec) {
             LazyRow(
                 state = state,
