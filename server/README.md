@@ -43,10 +43,15 @@ Note: `--windows-hide-console` is only available when building on Windows, so th
 
 Update by replacing the exe only; `data\` stays.
 
+## Limitations
+
+- Deleting from the app uses the Recycle Bin, which network shares and removable drives (USB disks, SD cards) do not have. For media on those drives the delete is refused with "Cannot move to Recycle Bin: <path> is on a network or removable drive" and nothing is deleted; remove the files in Explorer instead.
+
 ## Manual verification on Windows
 
 - [ ] Tray icon appears; menu has "Open admin page", "Rescan now", "Open log folder", "Quit" and each works
 - [ ] Deleting a media file from the app sends it to the Recycle Bin
+- [ ] Deleting a file on a USB drive or network share is refused with the "Cannot move to Recycle Bin" message and the file stays
 - [ ] Firewall prompt appears on first run; allowing private networks lets the TV connect
 - [ ] The server is visible via mDNS from the TV app (no manual address needed)
 - [ ] `data\logs\server.log` is written; Quit stops the process

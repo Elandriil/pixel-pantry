@@ -21,10 +21,29 @@ test("win32 builds one PowerShell command, quotes doubled, DeleteDirectory for f
   expect(args.slice(0, -1)).toEqual(["-NoProfile", "-NonInteractive", "-Command"]);
   const esc = (p: string) => p.replaceAll("'", "''");
   expect(args.at(-1)).toBe(
-    "Add-Type -AssemblyName Microsoft.VisualBasic; " +
+    "$ErrorActionPreference = 'Stop'; " +
+      "Add-Type -AssemblyName Microsoft.VisualBasic; " +
+      `foreach ($p in @('${esc(file)}', '${esc(folder)}')) { ` +
+      "try { $t = [string]([System.IO.DriveInfo]::new([System.IO.Path]::GetPathRoot($p)).DriveType) } catch { $t = 'Network' }; " +
+      "if ($t -in @('Network', 'Removable', 'NoRootDirectory', 'Unknown')) { " +
+      '[Console]::Error.WriteLine("Cannot move to Recycle Bin: $p is on a network or removable drive"); exit 1 } }; ' +
       `[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${esc(file)}', 'OnlyErrorDialogs', 'SendToRecycleBin'); ` +
       `[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('${esc(folder)}', 'OnlyErrorDialogs', 'SendToRecycleBin')`,
   );
+});
+
+test("win32 checks every path's drive before the first delete", async () => {
+  const dir = tmpDir();
+  const file = join(dir, "a.mkv");
+  touch(file);
+  const { cmds, run } = recorder();
+  await trashPaths([file], run, "win32");
+  const script = cmds[0]!.at(-1)!;
+  const check = script.indexOf("[System.IO.DriveInfo]::new([System.IO.Path]::GetPathRoot($p))");
+  expect(check).toBeGreaterThan(0);
+  expect(script).toContain("'Network', 'Removable'");
+  expect(script).toContain("Cannot move to Recycle Bin: $p is on a network or removable drive");
+  expect(check).toBeLessThan(script.indexOf("::DeleteFile("));
 });
 
 test("darwin builds one osascript Finder delete with quotes and backslashes escaped", async () => {

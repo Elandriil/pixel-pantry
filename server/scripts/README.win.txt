@@ -28,6 +28,13 @@ Files
 - Log file: data\logs\server.log (tray menu: "Open log folder").
 - To update, replace PixelPantry.exe only. Keep the "data" folder.
 
+Deleting from the TV app
+------------------------
+- Deleted files go to the Recycle Bin. Network shares and removable drives
+  (USB disks, SD cards) have no Recycle Bin, so deleting media stored there is
+  refused ("Cannot move to Recycle Bin: ... is on a network or removable
+  drive") and nothing is deleted. Delete those files in Explorer instead.
+
 If the TV cannot find the server
 --------------------------------
 - The TV and this PC must be on the same Wi-Fi / LAN (not a guest network).
