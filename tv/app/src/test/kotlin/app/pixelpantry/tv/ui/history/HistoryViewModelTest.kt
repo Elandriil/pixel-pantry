@@ -3,9 +3,14 @@ package app.pixelpantry.tv.ui.history
 import app.pixelpantry.tv.api.ApiClient
 import app.pixelpantry.tv.ui.history.HistoryViewModel.UiState
 import app.pixelpantry.tv.ui.home.HomeViewModel.NavEvent
+import app.pixelpantry.tv.ui.components.Toaster
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -74,14 +79,23 @@ class HistoryViewModelTest {
 
     @After fun tearDown() {
         Dispatchers.resetMain()
+        toastScope.cancel()
         runCatching { server.shutdown() }
     }
 
     private fun json(body: String) = MockResponse().setHeader("Content-Type", "application/json").setBody(body)
 
-    private val strings = HistoryViewModel.Strings(today = "Today", yesterday = "Yesterday")
+    private val strings = HistoryViewModel.Strings(today = "Today", yesterday = "Yesterday", couldNotRefresh = "Could not refresh")
 
-    private fun vm() = HistoryViewModel(api, strings, clock = { now }, zone = zone, locale = Locale.ENGLISH)
+    private val toastScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val toaster = Toaster(toastScope)
+    private val reconnects = AtomicInteger(0)
+    private var onReconnect: () -> Unit = {}
+
+    private fun vm() = HistoryViewModel(
+        api, strings, toaster, clock = { now }, zone = zone, locale = Locale.ENGLISH,
+        reconnect = { reconnects.incrementAndGet(); onReconnect() },
+    )
 
     private suspend fun awaitRealTime(condition: () -> Boolean) = withContext(Dispatchers.Default) {
         withTimeout(5_000) { while (!condition()) delay(10) }
@@ -166,5 +180,38 @@ class HistoryViewModelTest {
         val vm = vm()
         awaitRealTime { vm.state.value !is UiState.Loading }
         assertEquals(UiState.Error("boom"), vm.state.value)
+    }
+
+    // Unreachable server and failed refreshes (Task 13)
+
+    private val deadUrl = "http://127.0.0.1:1"
+
+    @Test fun anUnreachableServerOnTheFirstLoadShowsUnreachableWithTheBaseUrl() = runTest {
+        api.baseUrl = deadUrl
+        val vm = vm()
+        awaitRealTime { vm.state.value !is UiState.Loading }
+        assertEquals(UiState.Unreachable(deadUrl), vm.state.value)
+    }
+
+    @Test fun retryReconnectsOnceThenReloads() = runTest {
+        val live = api.baseUrl
+        api.baseUrl = deadUrl
+        val vm = vm()
+        vm.state.first { it is UiState.Unreachable }
+        onReconnect = { api.baseUrl = live }
+        vm.retry()
+        assertEquals(4, vm.loaded().days.size)
+        assertEquals(1, reconnects.get())
+    }
+
+    @Test fun aFailedReloadKeepsTheLoadedHistoryAndToasts() = runTest {
+        val vm = vm()
+        val before = vm.loaded()
+        api.baseUrl = deadUrl
+        vm.onResume()
+        vm.onResume()
+        awaitRealTime { toaster.current.value != null }
+        assertEquals("Could not refresh", toaster.current.value)
+        assertEquals(before, vm.state.value)
     }
 }

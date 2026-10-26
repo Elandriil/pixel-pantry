@@ -8,6 +8,8 @@ import app.pixelpantry.tv.api.ApiException
 import app.pixelpantry.tv.api.HistoryEntry
 import app.pixelpantry.tv.api.ItemSummary
 import app.pixelpantry.tv.api.Stats
+import app.pixelpantry.tv.ui.components.Toaster
+import app.pixelpantry.tv.ui.components.isUnreachable
 import app.pixelpantry.tv.ui.home.HomeViewModel.NavEvent
 import app.pixelpantry.tv.util.formatEpisodeTag
 import app.pixelpantry.tv.util.formatWatched
@@ -29,17 +31,20 @@ import java.util.Locale
 
 /**
  * Watch history grouped by local day (newest first, as the server sends it) plus the stats tiles. Reloads each
- * time the page is shown again.
+ * time the page is shown again; a reload that fails keeps the page and toasts [Strings.couldNotRefresh].
  */
 class HistoryViewModel(
     private val api: ApiClient,
     private val strings: Strings,
+    private val toaster: Toaster,
     private val clock: () -> Long = System::currentTimeMillis,
     private val zone: ZoneId = ZoneId.systemDefault(),
     locale: Locale = Locale.getDefault(),
+    /** Resolves the server once more (see `AppContainer.reconnect`); run by [retry]. */
+    private val reconnect: suspend () -> Unit = {},
 ) : ViewModel() {
 
-    data class Strings(val today: String, val yesterday: String)
+    data class Strings(val today: String, val yesterday: String, val couldNotRefresh: String)
 
     /** One session; [title] is `Show · S2 · E4 · Episode title` for episodes, the title for movies. */
     data class HistoryRow(
@@ -56,6 +61,8 @@ class HistoryViewModel(
     sealed interface UiState {
         data object Loading : UiState
         data class Error(val message: String) : UiState
+        /** The first load got no answer from [baseUrl]. */
+        data class Unreachable(val baseUrl: String) : UiState
         /** [days] is empty when nothing has been watched yet. */
         data class Loaded(val stats: Stats, val days: List<DayGroup>) : UiState
     }
@@ -80,15 +87,31 @@ class HistoryViewModel(
     fun load() {
         loadJob?.cancel()
         if (_state.value !is UiState.Loaded) _state.value = UiState.Loading
+        loadJob = viewModelScope.launch { fetch() }
+    }
+
+    /** Unreachable / error screen's Retry: resolves the server once more, then loads. */
+    fun retry() {
+        loadJob?.cancel()
+        _state.value = UiState.Loading
         loadJob = viewModelScope.launch {
-            _state.value = try {
-                coroutineScope {
-                    val history = async { api.history() }
-                    val stats = async { api.stats() }
-                    UiState.Loaded(stats.await(), group(history.await().entries))
-                }
-            } catch (e: ApiException) {
-                UiState.Error(e.message.orEmpty())
+            reconnect()
+            fetch()
+        }
+    }
+
+    private suspend fun fetch() {
+        try {
+            _state.value = coroutineScope {
+                val history = async { api.history() }
+                val stats = async { api.stats() }
+                UiState.Loaded(stats.await(), group(history.await().entries))
+            }
+        } catch (e: ApiException) {
+            when {
+                _state.value is UiState.Loaded -> toaster.show(strings.couldNotRefresh)
+                e.isUnreachable() -> _state.value = UiState.Unreachable(api.baseUrl)
+                else -> _state.value = UiState.Error(e.message.orEmpty())
             }
         }
     }
@@ -137,8 +160,14 @@ class HistoryViewModel(
         )
     }
 
-    class Factory(private val api: ApiClient, private val strings: Strings) : ViewModelProvider.Factory {
+    class Factory(
+        private val api: ApiClient,
+        private val strings: Strings,
+        private val toaster: Toaster,
+        private val reconnect: suspend () -> Unit,
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T = HistoryViewModel(api, strings) as T
+        override fun <T : ViewModel> create(modelClass: Class<T>): T =
+            HistoryViewModel(api, strings, toaster, reconnect = reconnect) as T
     }
 }

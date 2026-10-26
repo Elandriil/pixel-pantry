@@ -8,16 +8,26 @@ import app.pixelpantry.tv.server.ServerAddress
 import app.pixelpantry.tv.server.ServerLocator
 import app.pixelpantry.tv.server.ServerResolver
 import app.pixelpantry.tv.server.ServerStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * First-run flow: find the server automatically, or let the user type `host:port`.
+ * Finds the server: at startup, and from an Unreachable screen's "Change server" ([changeServer]).
+ *
+ * At startup a stored address (the manual one, else the last known) is used at once — the app goes straight to
+ * Home — and verified in the background on [verifyScope] (it outlives this screen); a failed check only calls
+ * [onCachedUnreachable] (a toast), the pages handle a server that really is gone. Without a stored address the
+ * resolver runs (manual → last known → mDNS); when it finds nothing the user types `host:port`.
+ * With [changeServer] nothing is tried: the form shows, prefilled with the current address.
  * On success [ApiClient.baseUrl] is set before the state turns [UiState.Ready].
  */
 class ConnectViewModel(
@@ -25,6 +35,10 @@ class ConnectViewModel(
     private val api: ApiClient,
     private val store: ServerStore,
     private val probe: suspend (baseUrl: String) -> Boolean = ServerResolver.apiProbe(api),
+    private val verifyScope: CoroutineScope? = null,
+    /** Called with `host:port` when the stored address used at startup does not answer as Pixel Pantry. */
+    private val onCachedUnreachable: (address: String) -> Unit = {},
+    changeServer: Boolean = false,
 ) : ViewModel() {
 
     sealed interface ConnectError {
@@ -50,13 +64,46 @@ class ConnectViewModel(
     private var job: Job? = null
 
     init {
-        retry()
+        if (changeServer) {
+            val current = api.baseUrl.removePrefix("http://")
+            draft = current
+            lastTried = listOfNotNull(api.baseUrl.takeIf { it.isNotBlank() })
+            _state.value = UiState.Failed(tried = lastTried, manualDraft = current)
+        } else {
+            start()
+        }
+    }
+
+    /** Startup: the stored address when there is one, else the resolver. */
+    private fun start() {
+        job = viewModelScope.launch {
+            val cached = try {
+                store.manualAddress.first()?.takeIf { it.isNotBlank() } ?: store.lastKnownAddress.first()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null // unreadable storage: discover instead
+            }
+            if (cached == null) {
+                resolveNow()
+                return@launch
+            }
+            val url = "http://$cached"
+            _state.value = ready(url)
+            (verifyScope ?: viewModelScope).launch {
+                if (!probe(url)) onCachedUnreachable(cached)
+            }
+        }
     }
 
     fun retry() {
         job?.cancel()
         _state.value = UiState.Resolving()
-        job = viewModelScope.launch {
+        job = viewModelScope.launch { resolveNow() }
+    }
+
+    private suspend fun resolveNow() {
+        coroutineScope {
             val r = locator.resolve()
             ensureActive() // a retry or manual submit superseded this search; do not switch servers
             _state.value = when (r) {
@@ -90,7 +137,13 @@ class ConnectViewModel(
             ensureActive() // superseded meanwhile; do not switch servers
             _state.value = if (ok) {
                 // Storing is best-effort: a storage error must not undo a working connection.
-                runCatching { store.setManualAddress(trimmed) }
+                try {
+                    store.setManualAddress(trimmed)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Connected anyway; the next start discovers the server again.
+                }
                 ready(url)
             } else {
                 UiState.Failed(lastTried, manualDraft = address, error = ConnectError.Unreachable(trimmed))
@@ -107,8 +160,14 @@ class ConnectViewModel(
         private val locator: ServerLocator,
         private val api: ApiClient,
         private val store: ServerStore,
+        private val verifyScope: CoroutineScope,
+        private val onCachedUnreachable: (address: String) -> Unit,
+        private val changeServer: Boolean,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T = ConnectViewModel(locator, api, store) as T
+        override fun <T : ViewModel> create(modelClass: Class<T>): T = ConnectViewModel(
+            locator, api, store,
+            verifyScope = verifyScope, onCachedUnreachable = onCachedUnreachable, changeServer = changeServer,
+        ) as T
     }
 }

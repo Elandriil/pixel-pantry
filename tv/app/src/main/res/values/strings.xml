@@ -161,4 +161,12 @@
 
     <!-- Generic -->
     <string name="loading">Loading…</string>
+
+    <!-- Unreachable server (every page's first load) -->
+    <string name="unreachable_title">Cannot reach the server</string>
+    <string name="unreachable_detail">Tried %1$s</string>
+    <string name="unreachable_retry">Retry</string>
+    <string name="unreachable_change_server">Change server</string>
+    <string name="could_not_refresh">Could not refresh</string>
+    <string name="server_not_reachable">Server not reachable at %1$s</string>
 </resources>

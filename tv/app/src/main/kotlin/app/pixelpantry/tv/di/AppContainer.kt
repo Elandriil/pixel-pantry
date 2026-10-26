@@ -14,6 +14,7 @@ import app.pixelpantry.tv.player.PlayerViewModel
 import app.pixelpantry.tv.player.ProgressReporter
 import app.pixelpantry.tv.server.NsdDiscovery
 import app.pixelpantry.tv.server.ServerResolver
+import app.pixelpantry.tv.ui.connect.ConnectViewModel
 import app.pixelpantry.tv.server.ServerStore
 import app.pixelpantry.tv.settings.SettingsRepo
 import app.pixelpantry.tv.ui.components.Toaster
@@ -23,6 +24,7 @@ import app.pixelpantry.tv.ui.show.ShowViewModel
 import coil.ImageLoader
 import coil.disk.DiskCache
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 
@@ -57,6 +59,7 @@ class AppContainer(private val app: Application) {
             markSeasonWatched = app.getString(R.string.show_mark_season_watched),
             markSeasonUnwatched = app.getString(R.string.show_mark_season_unwatched),
             movedToRecycleBin = app.getString(R.string.delete_moved),
+            couldNotRefresh = couldNotRefresh,
         )
     }
     val playerStrings: PlayerViewModel.Strings by lazy {
@@ -74,7 +77,11 @@ class AppContainer(private val app: Application) {
         )
     }
     val historyStrings: HistoryViewModel.Strings by lazy {
-        HistoryViewModel.Strings(today = app.getString(R.string.history_today), yesterday = app.getString(R.string.history_yesterday))
+        HistoryViewModel.Strings(
+            today = app.getString(R.string.history_today),
+            yesterday = app.getString(R.string.history_yesterday),
+            couldNotRefresh = couldNotRefresh,
+        )
     }
     val settingsStrings: SettingsViewModel.Strings by lazy {
         SettingsViewModel.Strings(
@@ -94,6 +101,30 @@ class AppContainer(private val app: Application) {
             other = { message, code -> app.getString(R.string.player_error_other, message, code) },
         )
     }
+
+    /** Toast when a page could not reload content it already shows. */
+    val couldNotRefresh: String get() = app.getString(R.string.could_not_refresh)
+
+    /**
+     * The Unreachable screen's Retry: runs the resolver once (manual address, last known, mDNS) and switches
+     * [ApiClient.baseUrl] when it finds the server; the page then reloads and shows Unreachable again if not.
+     */
+    suspend fun reconnect() {
+        try {
+            (resolver.resolve() as? ServerResolver.Result.Found)?.let { api.baseUrl = it.baseUrl }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("PixelPantry", "Reconnect failed", e)
+        }
+    }
+
+    /** The connect screen: at startup ([changeServer] false) or from an Unreachable screen's "Change server". */
+    fun connectFactory(changeServer: Boolean) = ConnectViewModel.Factory(
+        resolver, api, serverStore, scope,
+        onCachedUnreachable = { toaster.show(app.getString(R.string.server_not_reachable, it)) },
+        changeServer = changeServer,
+    )
 
     /** One reporter per playback screen. */
     fun progressReporter(): ProgressReporter =

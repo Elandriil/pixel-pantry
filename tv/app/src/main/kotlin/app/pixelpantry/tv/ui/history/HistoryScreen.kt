@@ -48,6 +48,7 @@ import app.pixelpantry.tv.ui.components.ButtonSpec
 import app.pixelpantry.tv.ui.components.ErrorScreen
 import app.pixelpantry.tv.ui.components.LoadingScreen
 import app.pixelpantry.tv.ui.components.RemoteImage
+import app.pixelpantry.tv.ui.components.UnreachableScreen
 import app.pixelpantry.tv.ui.history.HistoryViewModel.HistoryRow
 import app.pixelpantry.tv.ui.history.HistoryViewModel.UiState
 import app.pixelpantry.tv.ui.home.HomeViewModel.NavEvent
@@ -55,7 +56,7 @@ import app.pixelpantry.tv.util.formatHours
 
 /** History page content: stat tiles over the sessions, grouped by day. */
 @Composable
-fun HistoryScreen(vm: HistoryViewModel, onNavigate: (NavEvent) -> Unit) {
+fun HistoryScreen(vm: HistoryViewModel, onNavigate: (NavEvent) -> Unit, onChangeServer: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(vm) { vm.navEvents.collect(onNavigate) }
     // Refresh when shown again (back from a show page or the player) so the newest sessions are listed.
@@ -68,6 +69,7 @@ fun HistoryScreen(vm: HistoryViewModel, onNavigate: (NavEvent) -> Unit) {
             detail = s.message,
             primary = ButtonSpec(stringResource(R.string.home_retry), vm::load),
         )
+        is UiState.Unreachable -> UnreachableScreen(s.baseUrl, onRetry = vm::retry, onChangeServer = onChangeServer)
         is UiState.Loaded -> Loaded(s, vm::open)
     }
 }

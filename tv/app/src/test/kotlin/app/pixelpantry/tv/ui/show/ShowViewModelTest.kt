@@ -65,6 +65,7 @@ class ShowViewModelTest {
         markSeasonWatched = "Mark season watched",
         markSeasonUnwatched = "Mark season unwatched",
         movedToRecycleBin = "Moved to Recycle Bin",
+        couldNotRefresh = "Could not refresh",
     )
 
     @Before fun setUp() {
@@ -103,14 +104,20 @@ class ShowViewModelTest {
      */
     private val toastScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    private val reconnects = AtomicInteger(0)
+    private var onReconnect: () -> Unit = {}
+
     private fun showVm(id: Int = 1): ShowViewModel {
         toaster = Toaster(toastScope)
-        return ShowViewModel(api, showId = id, movieItemId = null, toaster = toaster, strings = strings)
+        return ShowViewModel(api, showId = id, movieItemId = null, toaster = toaster, strings = strings) {
+            reconnects.incrementAndGet()
+            onReconnect()
+        }
     }
 
     private fun movieVm(): ShowViewModel {
         toaster = Toaster(toastScope)
-        return ShowViewModel(api, showId = null, movieItemId = 20, toaster = toaster, strings = strings)
+        return ShowViewModel(api, showId = null, movieItemId = 20, toaster = toaster, strings = strings) { reconnects.incrementAndGet() }
     }
 
     private fun TestScope.collectEvents(vm: ShowViewModel): MutableList<NavEvent> {
@@ -340,6 +347,68 @@ class ShowViewModelTest {
         vm.onResume()
         awaitRealTime { showLoads.get() == 2 }
         assertTrue(vm.state.value is UiState.Loaded)
+    }
+
+    // Unreachable server, failed refreshes, actions during a delete (Task 13)
+
+    private val deadUrl = "http://127.0.0.1:1"
+
+    @Test fun anUnreachableServerOnTheFirstLoadShowsUnreachableWithTheBaseUrl() = runTest {
+        api.baseUrl = deadUrl
+        assertEquals(UiState.Unreachable(deadUrl), showVm().state.first { it !is UiState.Loading })
+        assertEquals(0, reconnects.get())
+    }
+
+    @Test fun retryReconnectsOnceThenReloads() = runTest {
+        val live = api.baseUrl
+        api.baseUrl = deadUrl
+        val vm = showVm()
+        vm.state.first { it is UiState.Unreachable }
+        onReconnect = { api.baseUrl = live }
+        vm.retry()
+        assertEquals("Severance", vm.loaded().title)
+        assertEquals(1, reconnects.get())
+    }
+
+    @Test fun aFailedReloadKeepsThePageAndToastsCouldNotRefresh() = runTest {
+        val vm = showVm()
+        val before = vm.loaded()
+        api.baseUrl = deadUrl
+        vm.onResume()
+        vm.onResume()
+        awaitRealTime { toaster.current.value != null }
+        assertEquals("Could not refresh", toaster.current.value)
+        assertEquals(before, vm.state.value)
+    }
+
+    @Test fun actionsAreIgnoredWhileDeletingAndAfterTheDeleteSucceeded() = runTest {
+        deleteBody = { json("""{"trashed":["a.mkv"]}""").setHeadersDelay(300, java.util.concurrent.TimeUnit.MILLISECONDS) }
+        val vm = showVm()
+        val events = collectEvents(vm)
+        val s = vm.loaded()
+        vm.deleteFromPc()
+        assertTrue(vm.deleting.value)
+        vm.primaryAction()
+        vm.play(s.seasons[0].episodes[0], fromStart = false)
+        vm.markShowWatched(true)
+        awaitRealTime { events.isNotEmpty() }
+
+        // Still deleting until the page has gone: a late press cannot start playback of deleted files.
+        assertTrue(vm.deleting.value)
+        vm.primaryAction()
+        assertEquals(listOf<NavEvent>(NavEvent.Back), events)
+        assertTrue(requests.none { it.startsWith("POST") })
+    }
+
+    @Test fun aFailedDeleteEnablesTheActionsAgain() = runTest {
+        deleteBody = { json("""{"error":"File is in use"}""").setResponseCode(409) }
+        val vm = showVm()
+        val events = collectEvents(vm)
+        vm.loaded()
+        vm.deleteFromPc()
+        awaitRealTime { !vm.deleting.value }
+        vm.primaryAction()
+        assertEquals(listOf<NavEvent>(NavEvent.Player(12, fromStart = false)), events)
     }
 
     private companion object {

@@ -14,8 +14,9 @@ import kotlinx.coroutines.launch
 
 /**
  * The one place a library rescan runs (app-wide, so it survives page changes): POST `/api/scan`, toast, poll
- * `/api/scan/status` every [pollIntervalMs] until idle, then signal [scanFinished] and toast the outcome.
- * A rescan requested while one is running is not started twice.
+ * `/api/scan/status` every [pollIntervalMs] until idle, then signal [scanFinished] with the outcome's toast text.
+ * The pages reload on that signal and show the text once their reload went through (a failed reload toasts its
+ * failure instead). A rescan requested while one is running is not started twice.
  */
 class LibraryScanner(
     private val api: ApiClient,
@@ -27,10 +28,13 @@ class LibraryScanner(
     /** Toast texts; supplied from string resources. */
     class Strings(val scanning: String, val updated: String, val scanFailed: (error: String) -> String)
 
-    private val _scanFinished = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val _scanFinished = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
-    /** Fires once per finished scan (also one that reported an error: it may still have changed the library). */
-    val scanFinished: SharedFlow<Unit> = _scanFinished.asSharedFlow()
+    /**
+     * Fires once per finished scan (also one that reported an error: it may still have changed the library) with
+     * the toast for its outcome: [Strings.updated] or [Strings.scanFailed].
+     */
+    val scanFinished: SharedFlow<String> = _scanFinished.asSharedFlow()
 
     private var job: Job? = null
 
@@ -54,8 +58,7 @@ class LibraryScanner(
                 toaster.show(e.message.orEmpty())
                 return@launch
             }
-            _scanFinished.emit(Unit)
-            toaster.show(finished.lastError?.let(strings.scanFailed) ?: strings.updated)
+            _scanFinished.emit(finished.lastError?.let(strings.scanFailed) ?: strings.updated)
         }
     }
 }

@@ -13,6 +13,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -20,6 +21,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil.ImageLoader
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 
 /** How screens load server images: the app's Coil loader plus the server-base prefixing of image paths. */
 class ImageSource(val loader: ImageLoader, val resolve: (path: String) -> String)
@@ -27,8 +29,9 @@ class ImageSource(val loader: ImageLoader, val resolve: (path: String) -> String
 val LocalImageSource = staticCompositionLocalOf<ImageSource> { error("No ImageSource provided") }
 
 /**
- * A server image (path relative to the server base) on a surface-coloured box. While loading the box shows
- * nothing; with no path or a failed load it shows [fallbackText] centred, so unmatched items look intentional.
+ * A server image (path relative to the server base) on a surface-coloured box, faded in when it arrives. While
+ * loading the box is the placeholder (plain surface colour); with no path or a failed load it shows
+ * [fallbackText] centred (title only), so unmatched items look intentional. Every card goes through here.
  */
 @Composable
 fun RemoteImage(path: String?, fallbackText: String?, modifier: Modifier = Modifier) {
@@ -37,7 +40,7 @@ fun RemoteImage(path: String?, fallbackText: String?, modifier: Modifier = Modif
     Box(modifier.background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
         if (path != null && !failed) {
             AsyncImage(
-                model = source.resolve(path),
+                model = ImageRequest.Builder(LocalContext.current).data(source.resolve(path)).crossfade(true).build(),
                 imageLoader = source.loader,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,

@@ -42,6 +42,7 @@ import app.pixelpantry.tv.ui.components.ErrorScreen
 import app.pixelpantry.tv.ui.components.FocusableButton
 import app.pixelpantry.tv.ui.components.HeroStrip
 import app.pixelpantry.tv.ui.components.LoadingScreen
+import app.pixelpantry.tv.ui.components.UnreachableScreen
 import app.pixelpantry.tv.ui.components.key
 import app.pixelpantry.tv.ui.components.rememberRowsBringIntoViewSpec
 import app.pixelpantry.tv.ui.home.HomeViewModel.NavEvent
@@ -52,6 +53,7 @@ import app.pixelpantry.tv.ui.home.HomeViewModel.UiState
 fun HomeScreen(
     vm: HomeViewModel,
     onNavigate: (NavEvent) -> Unit,
+    onChangeServer: () -> Unit,
     onCardLongClick: (Card) -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -64,8 +66,9 @@ fun HomeScreen(
         is UiState.Error -> ErrorScreen(
             title = stringResource(R.string.home_error_title),
             detail = s.message,
-            primary = ButtonSpec(stringResource(R.string.home_retry), vm::load),
+            primary = ButtonSpec(stringResource(R.string.home_retry)) { vm.load() },
         )
+        is UiState.Unreachable -> UnreachableScreen(s.baseUrl, onRetry = vm::retry, onChangeServer = onChangeServer)
         is UiState.Loaded ->
             if (s.rows.isEmpty()) EmptyLibrary(onRescan = vm::rescan)
             else Rows(s, onFocus = vm::onFocus, onClick = vm::open, onLongClick = onCardLongClick)

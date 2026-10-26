@@ -5,11 +5,15 @@ import app.pixelpantry.tv.library.LibraryScanner
 import app.pixelpantry.tv.ui.components.Toaster
 import app.pixelpantry.tv.ui.home.HomeViewModel.NavEvent
 import app.pixelpantry.tv.ui.home.HomeViewModel.UiState
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -76,6 +80,7 @@ class HomeViewModelTest {
 
     @After fun tearDown() {
         Dispatchers.resetMain()
+        toastScope.cancel()
         runCatching { server.shutdown() }
     }
 
@@ -84,11 +89,26 @@ class HomeViewModelTest {
     private fun status(state: String) =
         """{"state":"$state","startedAt":1,"finishedAt":null,"filesSeen":3,"filesProcessed":1,"phase":"probe","lastError":${lastError?.let { "\"$it\"" } ?: "null"}}"""
 
-    private fun TestScope.scanner() =
-        LibraryScanner(api, Toaster(backgroundScope), backgroundScope, strings, pollIntervalMs = 2_000)
+    /** Toasts clear on a real-time scope (see ShowViewModelTest). */
+    private val toastScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val toaster = Toaster(toastScope)
 
-    private fun TestScope.newVm(category: String = "home", scanner: LibraryScanner = scanner()) =
-        HomeViewModel(api, category, scanner)
+    /** Every toast shown, in order. */
+    private val toasts = ConcurrentLinkedQueue<String>()
+
+    private fun TestScope.scanner() =
+        LibraryScanner(api, toaster, backgroundScope, strings, pollIntervalMs = 2_000)
+
+    private val reconnects = AtomicInteger(0)
+    private var onReconnect: () -> Unit = {}
+
+    private fun TestScope.newVm(category: String = "home", scanner: LibraryScanner = scanner()): HomeViewModel {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { toaster.current.filterNotNull().collect { toasts += it } }
+        return HomeViewModel(api, category, scanner, toaster, couldNotRefresh = "Could not refresh") {
+            reconnects.incrementAndGet()
+            onReconnect()
+        }
+    }
 
     /** Waits in real time (HTTP runs on real threads) until [condition] holds, failing after 5 s. */
     private suspend fun awaitRealTime(condition: () -> Boolean) = withContext(Dispatchers.Default) {
@@ -181,6 +201,82 @@ class HomeViewModelTest {
         vm.onResume()
         awaitRealTime { homeLoads.get() == 2 }
         assertTrue(vm.state.value is UiState.Loaded)
+    }
+
+    // Unreachable server and failed refreshes (Task 13)
+
+    private val deadUrl = "http://127.0.0.1:1"
+
+    @Test fun anUnreachableServerOnTheFirstLoadShowsUnreachableWithTheBaseUrl() = runTest {
+        api.baseUrl = deadUrl
+        val vm = newVm()
+        assertEquals(UiState.Unreachable(deadUrl), vm.state.first { it !is UiState.Loading })
+        assertEquals("the initial load does not resolve", 0, reconnects.get())
+    }
+
+    @Test fun retryReconnectsOnceThenReloads() = runTest {
+        val live = api.baseUrl
+        api.baseUrl = deadUrl
+        val vm = newVm()
+        vm.state.first { it is UiState.Unreachable }
+        onReconnect = { api.baseUrl = live }
+
+        vm.retry()
+        val loaded = vm.loaded()
+
+        assertEquals(1, reconnects.get())
+        assertEquals(listOf("continue", "recent"), loaded.rows.map { it.key })
+    }
+
+    @Test fun retryThatStillCannotReachShowsUnreachableAgain() = runTest {
+        api.baseUrl = deadUrl
+        val vm = newVm()
+        vm.state.first { it is UiState.Unreachable }
+        vm.retry()
+        awaitRealTime { reconnects.get() == 1 && vm.state.value is UiState.Unreachable }
+        assertEquals(UiState.Unreachable(deadUrl), vm.state.value)
+    }
+
+    @Test fun aFailedReloadKeepsTheLoadedPageAndToasts() = runTest {
+        val vm = newVm()
+        val before = vm.loaded()
+        homeBody = { json("""{"error":"Database is locked"}""").setResponseCode(500) }
+        vm.onResume()
+        vm.onResume()
+        awaitRealTime { "Could not refresh" in toasts }
+        assertEquals(before, vm.state.value)
+    }
+
+    @Test fun anUnreachableReloadKeepsTheLoadedPageAndToasts() = runTest {
+        val vm = newVm()
+        val before = vm.loaded()
+        api.baseUrl = deadUrl
+        vm.onResume()
+        vm.onResume()
+        awaitRealTime { "Could not refresh" in toasts }
+        assertEquals(before, vm.state.value)
+    }
+
+    @Test fun aScanToastsLibraryUpdatedOnceThePageReloaded() = runTest {
+        val scanner = scanner()
+        val vm = newVm(scanner = scanner)
+        vm.loaded()
+        scanner.rescan()
+        awaitRealTime { "Library updated" in toasts }
+        assertEquals(2, homeLoads.get())
+        assertEquals(listOf("Scanning…", "Library updated"), toasts.toList())
+    }
+
+    @Test fun aScanWhoseReloadFailsToastsTheFailureInsteadOfLibraryUpdated() = runTest {
+        val scanner = scanner()
+        val vm = newVm(scanner = scanner)
+        val before = vm.loaded()
+        homeBody = { json("""{"error":"Database is locked"}""").setResponseCode(500) }
+        scanner.rescan()
+        awaitRealTime { "Could not refresh" in toasts }
+        withContext(Dispatchers.Default) { delay(100) }
+        assertEquals(listOf("Scanning…", "Could not refresh"), toasts.toList())
+        assertEquals(before, vm.state.value)
     }
 
     private companion object {

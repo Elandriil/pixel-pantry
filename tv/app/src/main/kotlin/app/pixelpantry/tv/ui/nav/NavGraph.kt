@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.lifecycle.Lifecycle
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -14,6 +15,7 @@ import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.pixelpantry.tv.BuildConfig
@@ -39,7 +41,8 @@ import app.pixelpantry.tv.ui.show.ShowScreen
 import app.pixelpantry.tv.ui.show.ShowViewModel
 
 object Routes {
-    const val CONNECT = "connect"
+    /** `change=true`: opened from an Unreachable screen's "Change server" (the form, prefilled). */
+    const val CONNECT = "connect?change={change}"
     const val HOME = "home/{category}"
     const val SHOW = "show/{id}"
     const val MOVIE = "movie/{id}"
@@ -51,6 +54,7 @@ object Routes {
     /** Home categories, as the server names them. */
     val CATEGORIES = listOf("home", "tv", "anime", "movies")
 
+    fun connect(changeServer: Boolean = false) = "connect?change=$changeServer"
     fun home(category: String) = "home/$category"
     fun show(id: Int) = "show/$id"
     fun movie(id: Int) = "movie/$id"
@@ -97,7 +101,12 @@ private fun NavController.openSidebarEntry(entry: SidebarEntry) {
 @Composable
 fun NavGraph(container: AppContainer) {
     val nav = rememberNavController()
-    fun homeFactory(category: String) = HomeViewModel.Factory(container.api, category, container.libraryScanner)
+    fun homeFactory(category: String) = HomeViewModel.Factory(
+        container.api, category, container.libraryScanner, container.toaster, container.couldNotRefresh, container::reconnect,
+    )
+
+    /** An Unreachable screen's "Change server": the connect form over the current page (BACK returns to it). */
+    fun changeServer() = nav.navigate(Routes.connect(changeServer = true)) { launchSingleTop = true }
 
     /**
      * Opens a card's destination. Only while [entry] is resumed (a second OK during the exit transition is
@@ -137,30 +146,35 @@ fun NavGraph(container: AppContainer) {
     @Composable
     fun DetailPage(backStack: NavBackStackEntry, showId: Int?, movieItemId: Int?) {
         val vm: ShowViewModel = viewModel(
-            factory = ShowViewModel.Factory(container.api, showId, movieItemId, container.toaster, container.showStrings),
+            factory = ShowViewModel.Factory(
+                container.api, showId, movieItemId, container.toaster, container.showStrings, container::reconnect,
+            ),
         )
         val selected = remember(backStack) { sidebarEntryForPrevious(nav.previousBackStackEntry) }
         Shell(selected, reselect = true) {
-            ShowScreen(vm, onNavigate = { event -> onShowEvent(backStack, event) })
+            ShowScreen(vm, onNavigate = { event -> onShowEvent(backStack, event) }, onChangeServer = ::changeServer)
         }
     }
 
     CompositionLocalProvider(LocalImageSource provides remember { ImageSource(container.imageLoader, container.api::resolve) }) {
         Box(Modifier.fillMaxSize()) {
             NavHost(navController = nav, startDestination = Routes.CONNECT) {
-                composable(Routes.CONNECT) {
-                    val vm: ConnectViewModel = viewModel(
-                        factory = ConnectViewModel.Factory(container.resolver, container.api, container.serverStore),
-                    )
+                composable(
+                    Routes.CONNECT,
+                    arguments = listOf(navArgument("change") { type = NavType.BoolType; defaultValue = false }),
+                ) { backStack ->
+                    val change = backStack.arguments?.getBoolean("change") ?: false
+                    val vm: ConnectViewModel = viewModel(factory = container.connectFactory(changeServer = change))
                     ConnectScreen(vm, onConnected = {
-                        nav.navigate(Routes.home("home")) { popUpTo(Routes.CONNECT) { inclusive = true } }
+                        // A fresh Home on the new server: everything below (pages of the old one) goes.
+                        nav.navigate(Routes.home("home")) { popUpTo(nav.graph.id) { inclusive = true } }
                     })
                 }
                 composable(Routes.HOME, arguments = listOf(navArgument("category") { type = NavType.StringType })) { backStack ->
                     val category = backStack.arguments?.getString("category").orEmpty()
                     val vm: HomeViewModel = viewModel(key = category, factory = homeFactory(category))
                     Shell(sidebarEntryFor(category)) {
-                        HomeScreen(vm, onNavigate = { event -> open(backStack, event) })
+                        HomeScreen(vm, onNavigate = { event -> open(backStack, event) }, onChangeServer = ::changeServer)
                     }
                 }
                 composable(Routes.SEARCH) { backStack ->
@@ -168,8 +182,12 @@ fun NavGraph(container: AppContainer) {
                     Shell(SidebarEntry.SEARCH) { SearchScreen(vm, onNavigate = { event -> open(backStack, event) }) }
                 }
                 composable(Routes.HISTORY) { backStack ->
-                    val vm: HistoryViewModel = viewModel(factory = HistoryViewModel.Factory(container.api, container.historyStrings))
-                    Shell(SidebarEntry.HISTORY) { HistoryScreen(vm, onNavigate = { event -> open(backStack, event) }) }
+                    val vm: HistoryViewModel = viewModel(
+                        factory = HistoryViewModel.Factory(container.api, container.historyStrings, container.toaster, container::reconnect),
+                    )
+                    Shell(SidebarEntry.HISTORY) {
+                        HistoryScreen(vm, onNavigate = { event -> open(backStack, event) }, onChangeServer = ::changeServer)
+                    }
                 }
                 composable(Routes.SETTINGS) {
                     val vm: SettingsViewModel = viewModel(
@@ -208,7 +226,9 @@ fun NavGraph(container: AppContainer) {
                     PlayerScreen(vm, onExit = { nav.popBackStack() })
                 }
             }
-            ToastHost(container.toaster)
+            // In the player the top-right corner belongs to the autoplay banner; toasts go top-left there.
+            val route = nav.currentBackStackEntryAsState().value?.destination?.route
+            ToastHost(container.toaster, alignment = if (route == Routes.PLAYER) Alignment.TopStart else Alignment.TopEnd)
         }
     }
 }

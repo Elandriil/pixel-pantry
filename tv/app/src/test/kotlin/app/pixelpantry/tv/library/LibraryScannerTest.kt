@@ -76,27 +76,28 @@ class LibraryScannerTest {
     private fun status(state: String) =
         """{"state":"$state","startedAt":1,"filesSeen":3,"filesProcessed":1,"phase":"probe","lastError":${lastError?.let { "\"$it\"" } ?: "null"}}"""
 
-    private class Fixture(val scanner: LibraryScanner, val toaster: Toaster, val toasts: List<String>, val finished: List<Unit>)
+    private class Fixture(val scanner: LibraryScanner, val toaster: Toaster, val toasts: List<String>, val finished: List<String>)
 
     private fun TestScope.fixture(): Fixture {
         val toaster = Toaster(backgroundScope)
         val toasts = mutableListOf<String>()
-        val finished = mutableListOf<Unit>()
+        val finished = mutableListOf<String>()
         val scanner = LibraryScanner(api, toaster, backgroundScope, strings, pollIntervalMs = 2_000)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { toaster.current.filterNotNull().toList(toasts) }
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { scanner.scanFinished.toList(finished) }
         return Fixture(scanner, toaster, toasts, finished)
     }
 
-    @Test fun rescanPostsPollsUntilIdleSignalsFinishedAndToastsInOrder() = runTest {
+    @Test fun rescanPostsPollsUntilIdleAndSignalsFinishedWithTheOutcome() = runTest {
         val f = fixture()
         f.scanner.rescan()
-        f.toaster.current.first { it == "Library updated" }
+        f.scanner.scanFinished.first()
 
-        assertEquals(listOf("Scanning…", "Library updated"), f.toasts)
+        // "Library updated" is the pages' toast, once their reload went through (see HomeViewModel).
+        assertEquals(listOf("Scanning…"), f.toasts)
         assertEquals(listOf("POST /api/scan", "GET /api/scan/status", "GET /api/scan/status"), requests.toList())
         assertEquals(2, statusPolls.get())
-        assertEquals(1, f.finished.size)
+        assertEquals(listOf("Library updated"), f.finished)
     }
 
     @Test fun pollsWaitTheIntervalBetweenPolls() = runTest {
@@ -104,7 +105,7 @@ class LibraryScannerTest {
         val f = fixture()
         val start = testScheduler.currentTime
         f.scanner.rescan()
-        f.toaster.current.first { it == "Library updated" }
+        f.scanner.scanFinished.first()
 
         assertEquals(3, statusPolls.get())
         // Each poll comes after a full interval (virtual time may run further while real HTTP is in flight).
@@ -116,17 +117,17 @@ class LibraryScannerTest {
         lastError = "Media folder is missing"
         val f = fixture()
         f.scanner.rescan()
-        f.toaster.current.first { it?.startsWith("Scan failed") == true }
+        f.scanner.scanFinished.first()
 
-        assertEquals(listOf("Scanning…", "Scan failed: Media folder is missing"), f.toasts)
-        assertEquals(1, f.finished.size)
+        assertEquals(listOf("Scanning…"), f.toasts)
+        assertEquals(listOf("Scan failed: Media folder is missing"), f.finished)
     }
 
     @Test fun secondRescanWhileScanningPostsOnce() = runTest {
         val f = fixture()
         f.scanner.rescan()
         f.scanner.rescan()
-        f.toaster.current.first { it == "Library updated" }
+        f.scanner.scanFinished.first()
 
         assertEquals(1, requests.count { it == "POST /api/scan" })
         assertEquals(2, statusPolls.get())
@@ -136,11 +137,10 @@ class LibraryScannerTest {
     @Test fun rescanAfterFinishStartsANewScan() = runTest {
         val f = fixture()
         f.scanner.rescan()
-        f.toaster.current.first { it == "Library updated" }
+        f.scanner.scanFinished.first()
         statusPolls.set(0)
         f.scanner.rescan()
-        f.toaster.current.first { it == "Scanning…" }
-        f.toaster.current.first { it == "Library updated" }
+        f.scanner.scanFinished.first()
 
         assertEquals(2, requests.count { it == "POST /api/scan" })
         assertEquals(2, f.finished.size)

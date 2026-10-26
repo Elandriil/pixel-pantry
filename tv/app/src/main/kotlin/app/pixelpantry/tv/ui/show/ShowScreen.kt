@@ -69,6 +69,7 @@ import app.pixelpantry.tv.ui.components.LoadingScreen
 import app.pixelpantry.tv.ui.components.MenuItem
 import app.pixelpantry.tv.ui.components.PivotBringIntoViewSpec
 import app.pixelpantry.tv.ui.components.RemoteImage
+import app.pixelpantry.tv.ui.components.UnreachableScreen
 import app.pixelpantry.tv.ui.show.ShowViewModel.NavEvent
 import app.pixelpantry.tv.ui.show.ShowViewModel.UiState
 import app.pixelpantry.tv.util.formatRuntime
@@ -104,7 +105,7 @@ private sealed interface MenuTarget {
 
 /** The show or movie page (sits inside the app shell). The primary button has focus when it opens. */
 @Composable
-fun ShowScreen(vm: ShowViewModel, onNavigate: (NavEvent) -> Unit) {
+fun ShowScreen(vm: ShowViewModel, onNavigate: (NavEvent) -> Unit, onChangeServer: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(vm) { vm.navEvents.collect(onNavigate) }
     // Refresh when shown again (back from the player) so progress and the Resume button are current.
@@ -117,6 +118,7 @@ fun ShowScreen(vm: ShowViewModel, onNavigate: (NavEvent) -> Unit) {
             detail = s.message,
             primary = ButtonSpec(stringResource(R.string.show_retry), vm::load),
         )
+        is UiState.Unreachable -> UnreachableScreen(s.baseUrl, onRetry = vm::retry, onChangeServer = onChangeServer)
         is UiState.Loaded -> DetailPage(s, vm)
     }
 }
@@ -193,8 +195,9 @@ private fun Page(
     val scroll = rememberScrollState()
     val scope = rememberCoroutineScope()
     // Whether the page was shown before (survives the trip to the player) / resumed in this composition.
+    // Both are written and read only in the resume callback below, never during composition.
     var shownBefore by rememberSaveable { mutableStateOf(false) }
-    val resumedHere = remember { booleanArrayOf(false) }
+    var resumedHere by remember { mutableStateOf(false) }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val backdropHeight = maxHeight * 0.45f
@@ -232,10 +235,11 @@ private fun Page(
     // Coming back from the player the request above does not take: focus entering the shell's content goes
     // through its focus restorer, which aims at the last focused episode card (not composed yet) and leaves a
     // focused group with no focused element. Once resumed, focus is already inside the group, so requesting
-    // the primary button is a move within it and works.
+    // the primary button is a move within it and works. Ordering: this runs after the LaunchedEffect above and
+    // after the shell's own initial focus request (AppShell's effect), so it has the last word on return.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        if (shownBefore && !resumedHere[0]) runCatching { primaryFocus.requestFocus() }
-        resumedHere[0] = true
+        if (shownBefore && !resumedHere) runCatching { primaryFocus.requestFocus() }
+        resumedHere = true
         shownBefore = true
     }
 }

@@ -9,6 +9,7 @@ import app.pixelpantry.tv.api.ItemSummary
 import app.pixelpantry.tv.api.SeasonDetail
 import app.pixelpantry.tv.api.ShowSummary
 import app.pixelpantry.tv.ui.components.Toaster
+import app.pixelpantry.tv.ui.components.isUnreachable
 import app.pixelpantry.tv.util.formatRemaining
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -22,7 +23,8 @@ import kotlinx.coroutines.launch
 /**
  * The detail page of a show ([showId]) or a movie ([movieItemId], an item id); exactly one is set. Loads the
  * page, works out the primary (Resume / Play) and secondary (mark season) buttons, and runs the page's actions.
- * Every write reloads the page afterwards; a failed write toasts the server's message.
+ * Every write reloads the page afterwards; a failed write toasts the server's message. A reload that fails keeps
+ * the page and toasts [Strings.couldNotRefresh]; only a failed first load shows an error screen.
  */
 class ShowViewModel(
     private val api: ApiClient,
@@ -30,6 +32,8 @@ class ShowViewModel(
     private val movieItemId: Int?,
     private val toaster: Toaster,
     private val strings: Strings,
+    /** Resolves the server once more (see `AppContainer.reconnect`); run by [retry]. */
+    private val reconnect: suspend () -> Unit,
 ) : ViewModel() {
 
     init {
@@ -45,11 +49,14 @@ class ShowViewModel(
         val markSeasonWatched: String,
         val markSeasonUnwatched: String,
         val movedToRecycleBin: String,
+        val couldNotRefresh: String,
     )
 
     sealed interface UiState {
         data object Loading : UiState
         data class Error(val message: String) : UiState
+        /** The first load got no answer from [baseUrl]. */
+        data class Unreachable(val baseUrl: String) : UiState
 
         /**
          * Exactly one of [show] / [movie] is set. [seasons] is empty for a movie; regular seasons come in order
@@ -89,7 +96,14 @@ class ShowViewModel(
 
     private var loadJob: Job? = null
     private var resumedBefore = false
-    private var deleting = false
+
+    private val _deleting = MutableStateFlow(false)
+
+    /**
+     * A delete is in flight, or succeeded and the page is about to close: the page's actions are disabled and
+     * ignored, so a Play press cannot race the DELETE.
+     */
+    val deleting: StateFlow<Boolean> = _deleting.asStateFlow()
 
     init {
         load()
@@ -99,12 +113,27 @@ class ShowViewModel(
     fun load() {
         loadJob?.cancel()
         if (_state.value !is UiState.Loaded) _state.value = UiState.Loading
+        loadJob = viewModelScope.launch { fetch() }
+    }
+
+    /** Unreachable / error screen's Retry: resolves the server once more, then loads. */
+    fun retry() {
+        loadJob?.cancel()
+        _state.value = UiState.Loading
         loadJob = viewModelScope.launch {
-            try {
-                _state.value = if (showId != null) fetchShow(showId) else fetchMovie(movieItemId!!)
-            } catch (e: ApiException) {
-                if (_state.value !is UiState.Loaded) _state.value = UiState.Error(e.message.orEmpty())
-                else toaster.show(e.message.orEmpty())
+            reconnect()
+            fetch()
+        }
+    }
+
+    private suspend fun fetch() {
+        try {
+            _state.value = if (showId != null) fetchShow(showId) else fetchMovie(movieItemId!!)
+        } catch (e: ApiException) {
+            when {
+                _state.value is UiState.Loaded -> toaster.show(strings.couldNotRefresh)
+                e.isUnreachable() -> _state.value = UiState.Unreachable(api.baseUrl)
+                else -> _state.value = UiState.Error(e.message.orEmpty())
             }
         }
     }
@@ -121,6 +150,7 @@ class ShowViewModel(
     }
 
     fun play(item: ItemSummary, fromStart: Boolean) {
+        if (_deleting.value) return
         _navEvents.tryEmit(NavEvent.Player(item.id, fromStart))
     }
 
@@ -144,22 +174,23 @@ class ShowViewModel(
 
     /** Moves the show's (or movie's) files to the PC's Recycle Bin, then leaves the page. */
     fun deleteFromPc() {
-        if (deleting) return
-        deleting = true
+        if (_deleting.value) return
+        _deleting.value = true
         viewModelScope.launch {
             try {
                 if (showId != null) api.deleteShow(showId) else api.deleteMovie(movieItemId!!)
                 toaster.show(strings.movedToRecycleBin)
+                // Stays set: the files are gone and the page is leaving.
                 _navEvents.emit(NavEvent.Back)
             } catch (e: ApiException) {
                 toaster.show(e.message.orEmpty())
-            } finally {
-                deleting = false
+                _deleting.value = false
             }
         }
     }
 
     private fun write(call: suspend () -> Unit) {
+        if (_deleting.value) return
         viewModelScope.launch {
             try {
                 call()
@@ -221,10 +252,11 @@ class ShowViewModel(
         private val movieItemId: Int?,
         private val toaster: Toaster,
         private val strings: Strings,
+        private val reconnect: suspend () -> Unit,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ShowViewModel(api, showId, movieItemId, toaster, strings) as T
+            ShowViewModel(api, showId, movieItemId, toaster, strings, reconnect) as T
     }
 }
 
