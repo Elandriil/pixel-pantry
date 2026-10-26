@@ -100,6 +100,18 @@ test("sidecar is served with its content type, shifted when ?shift=500", async (
   expect((await app.request(`/api/items/${id}/subtitles/sidecar/Heat.en.srt?shift=abc`)).status).toBe(400);
 });
 
+test("a Windows-1252 sidecar is served byte-identical unshifted and decoded when shifted", async () => {
+  const { id, video, app } = setup();
+  const cp1252 = new Uint8Array([...new TextEncoder().encode("1\n00:00:01,000 --> 00:00:02,000\nDon"), 0x92, 0x74, 0x0a]);
+  writeFileSync(video.replace(".mkv", ".en.srt"), cp1252);
+  const plain = await app.request(`/api/items/${id}/subtitles/sidecar/Heat.en.srt`);
+  expect(plain.headers.get("Content-Type")).toBe("application/x-subrip");
+  expect(new Uint8Array(await plain.arrayBuffer())).toEqual(cp1252);
+  const shifted = await app.request(`/api/items/${id}/subtitles/sidecar/Heat.en.srt?shift=1000`);
+  expect(shifted.headers.get("Content-Type")).toBe("application/x-subrip; charset=utf-8");
+  expect(await shifted.text()).toBe("1\n00:00:02,000 --> 00:00:03,000\nDon’t\n");
+});
+
 test("search returns 503 when OpenSubtitles is not configured", async () => {
   const { id, app } = setup();
   const r = await request(app, `/api/items/${id}/subtitles/search`);

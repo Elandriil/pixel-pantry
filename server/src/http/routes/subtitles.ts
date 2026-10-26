@@ -5,6 +5,7 @@ import type { ItemRow } from "../../library/repo";
 import type { OsSearch } from "../../subtitles/opensubtitles";
 import { openSubtitlesHash } from "../../subtitles/hash";
 import { listSidecars, saveSidecar, type SidecarTrack } from "../../subtitles/sidecar";
+import { decodeSubtitle } from "../../subtitles/decode";
 import { shiftSubtitle } from "../../subtitles/shift";
 import { jsonBody } from "../body";
 import type { Deps } from "../deps";
@@ -65,8 +66,10 @@ export function subtitleRoutes(deps: Deps): Hono {
     if (!track) throw new HttpError(404, "Subtitle not found");
     const shift = Number(c.req.query("shift") ?? 0);
     if (!Number.isSafeInteger(shift)) throw new HttpError(400, "shift must be an integer (ms)");
-    const text = await readFile(track.path, "utf8");
-    return c.body(shift === 0 ? text : shiftSubtitle(text, shift, track.format), 200, {
+    // unshifted: the file's own bytes, whatever their encoding (so no charset is claimed)
+    if (shift === 0) return new Response(Bun.file(track.path), { headers: { "Content-Type": CONTENT_TYPES[track.format] } });
+    const text = decodeSubtitle(new Uint8Array(await readFile(track.path)));
+    return c.body(shiftSubtitle(text, shift, track.format), 200, {
       "Content-Type": `${CONTENT_TYPES[track.format]}; charset=utf-8`,
     });
   });
