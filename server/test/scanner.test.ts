@@ -436,6 +436,63 @@ test("a group that throws is logged and skipped; other groups and hideEmpty stil
   expect(ctx.log.recent(50).some((l) => l.includes("scan group failed") && l.includes("tv:bad show:"))).toBe(true);
 });
 
+test("a merged alias key maps absolute anime numbers with the canonical show's seasons", async () => {
+  const ctx = setup();
+  ctx.tmdb.tvSearchResults = [{ id: 209867, title: "Frieren", originalTitle: null, year: 2023, popularity: 30 }];
+  ctx.tmdb.tvDetailsById[209867] = tvDetails(209867, "Frieren", [[1, 28]]);
+  ctx.tmdb.seasonsByIdAndNumber["209867:1"] = season(1, [1, 13, 14], 5000);
+  ctx.tmdb.seasonsByIdAndNumber["209867:2"] = season(2, [1, 2], 6000);
+  ctx.file("anime/Frieren (2023)/Frieren - 13.mkv"); // key anime:frieren:2023, sorts first: canonical
+  ctx.file("anime/Frieren/Frieren - 01.mkv"); // key anime:frieren: -> merged alias
+  await ctx.scanner.scan();
+  const canonical = ctx.repo.getShowByKey("anime:frieren:2023")!;
+  const alias = ctx.repo.getShowByKey("anime:frieren:")!;
+  expect(alias.deleted_at).not.toBeNull();
+
+  // TMDB later splits the season; only the canonical row is refreshed (the alias keeps its stale [28])
+  ctx.repo.upsertSeason(canonical.id, 1, { episode_count: 12 });
+  ctx.repo.upsertSeason(canonical.id, 2, { episode_count: 16 });
+  const rel = ctx.file("anime/Frieren/Frieren - 14.mkv");
+  ctx.clock.t += 1000;
+  await ctx.scanner.scan();
+  const item = ctx.repo.getItem(ctx.repo.getFileByPath(rel)!.item_id!)!;
+  expect([item.show_id, item.season_number, item.episode_number]).toEqual([canonical.id, 2, 2]);
+});
+
+test("a low-confidence show with a matched show's TMDB id stays separate until confirmed", async () => {
+  const ctx = setup();
+  ctx.tmdb.tvDetailsById[209867] = tvDetails(209867, "Frieren: Beyond Journey's End", [[1, 28]]);
+  ctx.tmdb.seasonsByIdAndNumber["209867:1"] = season(1, [1, 2], 5000);
+  ctx.tmdb.tvSearchResults = [
+    { id: 209867, title: "Frieren: Beyond Journey's End", originalTitle: "葬送のフリーレン", year: 2023, popularity: 30 },
+  ];
+  ctx.repo.setOverride("anime:frieren:", "show", 209867); // the canonical show, confirmed
+  ctx.file("anime/Frieren/Frieren S01E01.mkv");
+  ctx.file("anime/Sousou no Frieren/Sousou no Frieren S01E02.mkv"); // no title hit: low confidence
+  await ctx.scanner.scan();
+
+  const canonical = ctx.repo.getShowByKey("anime:frieren:")!;
+  const low = ctx.repo.getShowByKey("anime:sousou no frieren:")!;
+  expect(canonical).toMatchObject({ tmdb_id: 209867, match_error: null, deleted_at: null });
+  expect(low).toMatchObject({ tmdb_id: 209867, deleted_at: null });
+  expect(low.match_error).toStartWith("Low-confidence match");
+  expect(ctx.repo.listEpisodes(low.id).map((e) => e.episode_number)).toEqual([2]);
+  expect(ctx.repo.listUnmatchedShows().map((s) => s.id)).toEqual([low.id]);
+
+  // the owner confirms it as POST /admin/api/match does: override, cleared match state
+  ctx.repo.setOverride(low.parsed_key, "show", 209867);
+  ctx.repo.updateShowMeta(low.id, { tmdb_id: null });
+  ctx.repo.setShowMatchError(low.id, null, null);
+  ctx.repo.resetShowEpisodesMatch(low.id);
+  ctx.clock.t += 1000;
+  await ctx.scanner.scan();
+
+  expect(ctx.repo.getShow(low.id)!.deleted_at).not.toBeNull();
+  expect(ctx.repo.listShows("anime").map((s) => s.id)).toEqual([canonical.id]);
+  expect(ctx.repo.listEpisodes(canonical.id).map((e) => e.episode_number)).toEqual([1, 2]);
+  expect(ctx.repo.listUnmatchedShows()).toEqual([]);
+});
+
 test("unparseable file still becomes an item under folder title", async () => {
   const ctx = setup();
   const rel = ctx.file("tv/Weird Folder/clip.mkv");

@@ -52,6 +52,7 @@ const yearOf = (date: string | null | undefined): number | null => {
 /** match_error of a low-confidence match: it has a tmdb_id but is listed for review. */
 export const LOW_CONFIDENCE = "Low-confidence match";
 const lowConfidence = (title: string) => `${LOW_CONFIDENCE}: ${title}`;
+const isLowConfidence = (row: { match_error: string | null }) => (row.match_error ?? "").startsWith(LOW_CONFIDENCE);
 const genreJson = (genres: { name: string }[]): string => JSON.stringify(genres.map((g) => g.name));
 
 export class Scanner {
@@ -247,7 +248,7 @@ export class Scanner {
       show.tmdb_id === null
         ? []
         : repo
-            .listSeasons(showId)
+            .listSeasons(show.id) // the canonical show after a merge, not the alias row
             .filter((s) => s.number > 0)
             .map((s) => s.episode_count ?? 0);
     const itemsBySeason = new Map<number, Set<number>>();
@@ -268,13 +269,14 @@ export class Scanner {
   /**
    * Two parsed keys (`Doctor Who`, `Doctor Who 2005`) can match the same TMDB show: fold this one into the oldest
    * show of the category with that TMDB id. The merged row stays hidden and keeps its tmdb_id, so later scans of its
-   * files land here again.
+   * files land here again. Only high-confidence matches on both sides merge: a low-confidence row stays a separate
+   * show listed for review, and merges once the owner confirms it (the override clears the note).
    */
   private mergeIntoCanonical(show: ShowRow): ShowRow {
     const { repo, log } = this.deps;
-    if (show.tmdb_id === null) return show;
+    if (show.tmdb_id === null || isLowConfidence(show)) return show;
     const canonical = repo.getShowByTmdbId(show.tmdb_id, show.category);
-    if (!canonical || canonical.id === show.id) return show;
+    if (!canonical || canonical.id === show.id || isLowConfidence(canonical)) return show;
     if (show.deleted_at === null) {
       log.info("merging duplicate show", { from: show.parsed_key, into: canonical.parsed_key, tmdbId: show.tmdb_id });
     }
