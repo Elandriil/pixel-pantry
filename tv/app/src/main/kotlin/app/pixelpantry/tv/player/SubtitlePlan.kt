@@ -97,10 +97,17 @@ object SubtitlePlan {
         return embeddedGroups(detail, tracks)[id]
     }
 
-    /** The id of the embedded track the player's flags name the default (the server does not send the flag). */
+    /**
+     * The id of the embedded track the player's flags name the default (the server does not send the flag); with
+     * no default, the first forced one (a file with only forced subtitles, e.g. for foreign-language lines).
+     */
     fun defaultEmbeddedId(detail: ItemDetail, tracks: List<PlayerTrack>): String? {
-        val defaults = tracks.filter { it.isDefault }.map { it.groupIndex }.toSet()
-        return embeddedGroups(detail, tracks).entries.firstOrNull { it.value in defaults }?.key
+        val groups = embeddedGroups(detail, tracks).entries
+        fun flagged(flag: (PlayerTrack) -> Boolean): String? {
+            val indices = tracks.filter(flag).map { it.groupIndex }.toSet()
+            return groups.firstOrNull { it.value in indices }?.key
+        }
+        return flagged { it.isDefault } ?: flagged { it.isForced }
     }
 
     /**

@@ -7,7 +7,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
@@ -38,8 +41,8 @@ fun AppShell(
     content: @Composable () -> Unit,
 ) {
     val contentFocus = remember { FocusRequester() }
-    // Plain holder, not state: read only from the effect below, never during composition.
-    val contentHasFocus = remember { booleanArrayOf(false) }
+    // Written by the focus callback, read only by the effect below (never during composition: no recomposition).
+    var contentHasFocus by remember { mutableStateOf(false) }
     fun focusContent() = runCatching { contentFocus.requestFocus() }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -47,7 +50,7 @@ fun AppShell(
             Modifier
                 .fillMaxSize()
                 .padding(start = SidebarCollapsedWidth)
-                .onFocusChanged { contentHasFocus[0] = it.hasFocus }
+                .onFocusChanged { contentHasFocus = it.hasFocus }
                 .focusRequester(contentFocus)
                 .focusRestorer()
                 // Only LEFT may leave the content (into the sidebar); UP/DOWN/RIGHT at the edges stay put.
@@ -65,5 +68,8 @@ fun AppShell(
         )
     }
     // Content that focuses a specific element itself when it opens (e.g. restoring the last focused card) wins.
-    LaunchedEffect(Unit) { if (!contentHasFocus[0]) focusContent() }
+    // Ordering dependency: effects run in composition order, so the content's own LaunchedEffect (composed above,
+    // inside content()) has already requested focus — and onFocusChanged has updated contentHasFocus — when
+    // this one runs. Keep this effect after the content.
+    LaunchedEffect(Unit) { if (!contentHasFocus) focusContent() }
 }

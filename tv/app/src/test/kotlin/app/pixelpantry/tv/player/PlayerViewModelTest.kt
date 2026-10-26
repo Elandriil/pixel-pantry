@@ -1247,6 +1247,29 @@ class PlayerViewModelTest {
         awaitRealTime { trackPosts.isNotEmpty() }
     }
 
+    @Test fun switchingEpisodesCancelsADownloadInFlight() = playerTest {
+        searchBody = { json("""{"results":[$OS_RESULT]}""") }
+        downloadDelayMs = 1_000
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        vm.openMenu(PlayerViewModel.PlayerMenu.Subtitles)
+        vm.searchOnline()
+        awaitRealTime { vm.current().online is PlayerViewModel.OnlineState.Results }
+        vm.download(42)
+        awaitRealTime { downloadPosts.isNotEmpty() }
+        vm.closeMenu()
+
+        vm.next()
+        vm.playingItem(5)
+        // Not blocked by the old item's download: it was cancelled with the switch.
+        vm.download(43)
+        awaitRealTime { requests.contains("POST /api/items/5/subtitles/download") }
+        withContext(Dispatchers.Default) { delay(1_200) }
+        assertFalse("the cancelled download never refreshes item 4's tracks", requests.contains("GET /api/items/4/subtitles"))
+        assertEquals("off", vm.current().subtitleChoice)
+    }
+
     @Test fun anOpenMenuKeepsTheOverlayUpAndClosingRestartsTheHideTimer() = playerTest {
         val vm = vm()
         vm.playing()

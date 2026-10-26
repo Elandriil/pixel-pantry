@@ -170,7 +170,10 @@ class PlayerViewModel(
     private var pendingAudio: String? = null
     private var searchJob: Job? = null
 
-    /** An OpenSubtitles download; outlives the menu (it applies even after BACK) and blocks a second one. */
+    /**
+     * An OpenSubtitles download; outlives the menu (it applies even after BACK) and blocks a second one. A switch
+     * to another item cancels it.
+     */
     private var downloadJob: Job? = null
 
     /** The re-prepare for a sub delay change, [SUB_DELAY_DEBOUNCE_MS] after the last press. */
@@ -241,6 +244,7 @@ class PlayerViewModel(
         ended = false
         endReport = null
         searchJob?.cancel()
+        downloadJob?.cancel() // a download for the previous item must not block or touch this one
         delayJob?.cancel()
         // The stored choices are restored when they still name a track; the delay starts at 0 for every item.
         val plan = SubtitlePlan.build(d, api::resolve, d.subtitleChoice, shiftMs = 0)
@@ -616,6 +620,8 @@ class PlayerViewModel(
         countdown.cancel()
         stopCountdown()
         delayJob?.cancel()
+        searchJob?.cancel()
+        downloadJob?.cancel()
         tickerJob?.cancel()
         port.pause()
         // Sent even while the duration is unknown (as 0): the server ignores the duration then but keeps the session.

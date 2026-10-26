@@ -16,6 +16,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import androidx.datastore.preferences.core.emptyPreferences
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -107,6 +109,21 @@ class SettingsRepoTest {
         assertEquals(Settings(5, 45, true), r.settings.value)
         assertEquals(emptyList<Throwable>(), failures)
         guarded.cancel()
+    }
+
+    @Test fun aFailedCacheWriteDoesNotEscapeRefreshOrUpdate() = runTest {
+        val readOnly = object : DataStore<Preferences> {
+            override val data: Flow<Preferences> = flowOf(emptyPreferences())
+            override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
+                throw IOException("disk full")
+        }
+        val r = SettingsRepo(repoApi(), ServerStore(readOnly), scope)
+        reply("""{"skipBackSeconds":5,"skipForwardSeconds":45,"autoplayNext":true}""")
+        r.refresh() // must not throw
+        assertEquals(Settings(5, 45, true), r.settings.value)
+        reply("""{"skipBackSeconds":20,"skipForwardSeconds":45,"autoplayNext":true}""")
+        r.update(SettingsPatch(skipBackSeconds = 20))
+        assertEquals(Settings(20, 45, true), r.settings.value)
     }
 
     private fun repoApi() = ApiClient(OkHttpClient(), ApiClient.defaultJson).also { it.baseUrl = server.url("/").toString().trimEnd('/') }

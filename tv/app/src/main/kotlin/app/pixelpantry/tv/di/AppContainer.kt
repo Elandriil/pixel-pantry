@@ -23,8 +23,6 @@ import app.pixelpantry.tv.ui.show.ShowViewModel
 import coil.ImageLoader
 import coil.disk.DiskCache
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 
@@ -38,7 +36,7 @@ class AppContainer(private val app: Application) {
     val serverStore: ServerStore by lazy { ServerStore(dataStore) }
     val discovery: NsdDiscovery by lazy { NsdDiscovery(app) }
     val resolver: ServerResolver by lazy { ServerResolver(serverStore, discovery, ServerResolver.apiProbe(api)) }
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val scope: CoroutineScope = appScope { Log.e("PixelPantry", "Uncaught failure in the app scope", it) }
     val toaster = Toaster(scope)
     val libraryScanner: LibraryScanner by lazy {
         LibraryScanner(

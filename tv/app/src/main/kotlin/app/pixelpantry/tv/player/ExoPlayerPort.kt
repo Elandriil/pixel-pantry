@@ -171,6 +171,7 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
                 label = f.label,
                 isDefault = f.selectionFlags and C.SELECTION_FLAG_DEFAULT != 0,
                 selected = g.isSelected,
+                isForced = f.selectionFlags and C.SELECTION_FLAG_FORCED != 0,
             )
         }
 

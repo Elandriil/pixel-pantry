@@ -26,10 +26,12 @@ class NsdDiscovery(context: Context) : Discovery {
         val lock = Any()
         val pending = ArrayDeque<Pair<NsdServiceInfo, Boolean>>() // service, already retried
         var resolving = false
+        // Set once the collector is gone: callbacks still arriving from NsdManager start no further resolves.
+        var closed = false
 
         fun resolveNext() {
             val next = synchronized(lock) {
-                if (resolving) return
+                if (resolving || closed) return
                 pending.removeFirstOrNull()?.also { resolving = true } ?: return
             }
             val (service, retried) = next
@@ -41,7 +43,7 @@ class NsdDiscovery(context: Context) : Discovery {
                 nsd.resolveService(service, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
                         if (errorCode == NsdManager.FAILURE_ALREADY_ACTIVE && !retried) {
-                            synchronized(lock) { pending.addLast(service to true) }
+                            synchronized(lock) { if (!closed) pending.addLast(service to true) }
                         }
                         finish()
                     }
@@ -63,7 +65,7 @@ class NsdDiscovery(context: Context) : Discovery {
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {}
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                synchronized(lock) { pending.addLast(serviceInfo to false) }
+                synchronized(lock) { if (!closed) pending.addLast(serviceInfo to false) }
                 resolveNext()
             }
         }
@@ -72,7 +74,13 @@ class NsdDiscovery(context: Context) : Discovery {
         } catch (e: Exception) {
             close()
         }
-        awaitClose { runCatching { nsd.stopServiceDiscovery(listener) } }
+        awaitClose {
+            synchronized(lock) {
+                closed = true
+                pending.clear()
+            }
+            runCatching { nsd.stopServiceDiscovery(listener) }
+        }
     }
 
     /** Prefers IPv4; an IPv6 literal is bracketed so it can be used in a URL. */

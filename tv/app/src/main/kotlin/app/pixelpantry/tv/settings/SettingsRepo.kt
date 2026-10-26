@@ -4,6 +4,7 @@ import app.pixelpantry.tv.api.ApiClient
 import app.pixelpantry.tv.api.Settings
 import app.pixelpantry.tv.api.SettingsPatch
 import app.pixelpantry.tv.server.ServerStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,7 +33,14 @@ class SettingsRepo(
     private suspend fun publish(s: Settings) {
         seed.join()
         _settings.value = s
-        store.setCachedSettings(s)
+        // Best effort: the cache only serves an offline start; a storage error must not fail the fetch or save.
+        try {
+            store.setCachedSettings(s)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Keep the in-memory value.
+        }
     }
 
     private companion object {

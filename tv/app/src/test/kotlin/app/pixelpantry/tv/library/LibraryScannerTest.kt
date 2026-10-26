@@ -1,7 +1,14 @@
 package app.pixelpantry.tv.library
 
 import app.pixelpantry.tv.api.ApiClient
+import app.pixelpantry.tv.di.appScope
 import app.pixelpantry.tv.ui.components.Toaster
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -147,5 +154,29 @@ class LibraryScannerTest {
 
         assertEquals(listOf("POST /api/scan"), requests.toList())
         assertEquals(0, f.finished.size)
+    }
+
+    @Test fun aThrowingPollDoesNotPropagateOutOfTheAppScope() = runTest {
+        val uncaught = ConcurrentLinkedQueue<Throwable>()
+        val scope = appScope { uncaught += it }
+        // A failure that is not an ApiException (OkHttp hands an interceptor's RuntimeException straight through).
+        val throwing = ApiClient(
+            OkHttpClient.Builder().addInterceptor { chain ->
+                if (chain.request().url.encodedPath == "/api/scan/status") throw IllegalStateException("boom")
+                chain.proceed(chain.request())
+            }.build(),
+            ApiClient.defaultJson,
+        ).also { it.baseUrl = api.baseUrl }
+        val scanner = LibraryScanner(throwing, Toaster(scope), scope, strings, pollIntervalMs = 10)
+
+        scanner.rescan()
+        withContext(Dispatchers.Default) { withTimeout(5_000) { while (uncaught.isEmpty()) delay(10) } }
+
+        assertEquals("boom", uncaught.single().message)
+        assertTrue("the app scope keeps running", scope.isActive)
+        scanner.rescan()
+        withContext(Dispatchers.Default) { withTimeout(5_000) { while (uncaught.size < 2) delay(10) } }
+        assertEquals("a later rescan runs again", 2, requests.count { it == "POST /api/scan" })
+        scope.cancel()
     }
 }

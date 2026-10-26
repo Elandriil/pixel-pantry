@@ -163,6 +163,18 @@ class SubtitlePlanTest {
         assertNull(SubtitlePlan.defaultEmbeddedId(d, listOf(text(1, "3"), text(2, "4"))))
     }
 
+    @Test fun withoutADefaultTheFirstForcedEmbeddedTrackIsTheFallback() {
+        val d = detail(subtitles = listOf(embedded3, embedded4.copy(isDefault = false), srt))
+        val forced = listOf(text(1, "3"), forced(2, "4"), text(3, "sidecar:Show%20S01E01.en.srt"))
+        assertEquals("embedded:4", SubtitlePlan.defaultEmbeddedId(d, forced))
+        // A default track still wins over a forced one.
+        val both = listOf(text(1, "3", default = true), forced(2, "4"), text(3, "sidecar:Show%20S01E01.en.srt"))
+        assertEquals("embedded:3", SubtitlePlan.defaultEmbeddedId(d, both))
+    }
+
+    private fun forced(group: Int, id: String) =
+        PlayerTrack(groupIndex = group, id = id, language = null, label = null, isDefault = false, selected = false, isForced = true)
+
     @Test fun audioIdsMapToTheAudioGroupsInStreamOrder() {
         val audio = listOf(text(0, "1"), text(4, "2"))
         assertEquals(0, SubtitlePlan.audioGroup("audio:1", detail(), audio))

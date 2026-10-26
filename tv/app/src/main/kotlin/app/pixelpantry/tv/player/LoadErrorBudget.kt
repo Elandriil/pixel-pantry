@@ -4,7 +4,8 @@ package app.pixelpantry.tv.player
  * Decides whether a failing media load is retried or given up (pure; [ExoPlayerPort] feeds it).
  *
  * A "run" is a stretch of consecutive failures. It starts at the first error, again whenever data arrived since
- * the previous error ([bytesLoaded] grew), and again after a quiet gap of [newRunGapMs] — so a second outage
+ * the previous error ([bytesLoaded] grew), again when [bytesLoaded] fell (a seek started a new loadable, whose
+ * count starts from zero), and again after a quiet gap of [newRunGapMs] — so a second outage
  * minutes later gets its own full budget. Within a run errors are retried (after 1 s, then every 2 s) until the
  * run has lasted [giveUpAfterMs]. Media3's own error count cannot be used for this: for a continuous
  * progressive load it is reset only after the policy has been asked.
@@ -26,7 +27,7 @@ class LoadErrorBudget(
     @Synchronized
     fun onError(bytesLoaded: Long, now: Long): Decision {
         val last = lastErrorAtMs
-        if (last == null || bytesLoaded > lastBytesLoaded || now - last > newRunGapMs) {
+        if (last == null || bytesLoaded != lastBytesLoaded || now - last > newRunGapMs) {
             failingSinceMs = now
             errorsInRun = 0
         }

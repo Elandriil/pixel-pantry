@@ -66,7 +66,8 @@ interface PlayerListener {
 
 /**
  * One track group as the player sees it. [id] is the format id: the container's track id for an embedded track,
- * the subtitle configuration id (`sidecar:…`) for a sidecar. [isDefault]: the file flags it as default.
+ * the subtitle configuration id (`sidecar:…`) for a sidecar. [isDefault] / [isForced]: the file flags it as
+ * default / forced.
  */
 data class PlayerTrack(
     val groupIndex: Int,
@@ -75,4 +76,5 @@ data class PlayerTrack(
     val label: String?,
     val isDefault: Boolean,
     val selected: Boolean,
+    val isForced: Boolean = false,
 )

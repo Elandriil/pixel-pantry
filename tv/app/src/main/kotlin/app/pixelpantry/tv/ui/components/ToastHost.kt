@@ -10,8 +10,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -43,17 +46,17 @@ class Toaster(private val scope: CoroutineScope) {
     }
 }
 
-/** Renders the current toast top-right over everything else; draws nothing when there is none. */
+/** Renders the current toast over everything else, top-right by default; draws nothing when there is none. */
 @Composable
-fun ToastHost(toaster: Toaster, modifier: Modifier = Modifier) {
+fun ToastHost(toaster: Toaster, modifier: Modifier = Modifier, alignment: Alignment = Alignment.TopEnd) {
     val current by toaster.current.collectAsStateWithLifecycle()
-    // Keep the last text on screen while it fades out.
-    val last = remember { arrayOf("") }
-    current?.let { last[0] = it }
-    Box(modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.TopEnd) {
+    // The last text, kept on screen while it fades out; recorded after composition, never written during it.
+    var last by remember { mutableStateOf("") }
+    LaunchedEffect(current) { current?.let { last = it } }
+    Box(modifier.fillMaxSize().padding(32.dp), contentAlignment = alignment) {
         AnimatedVisibility(visible = current != null, enter = fadeIn(), exit = fadeOut()) {
             Text(
-                text = last[0],
+                text = current ?: last,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier

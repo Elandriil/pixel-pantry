@@ -52,4 +52,13 @@ class LoadErrorBudgetTest {
         budget.reset()
         assertEquals(Decision.Retry(1_000), budget.onError(0, 108_500))
     }
+
+    @Test fun fewerBytesThanAtTheLastErrorStartAFreshRun() {
+        // A seek made a new loadable: its byte count starts again from zero.
+        budget.onError(5_000_000, 100_000)
+        budget.onError(5_000_000, 106_000)
+        assertEquals(Decision.Retry(1_000), budget.onError(0, 109_000))
+        assertEquals(Decision.Retry(2_000), budget.onError(0, 116_000))
+        assertEquals(Decision.GiveUp, budget.onError(0, 117_000))
+    }
 }
