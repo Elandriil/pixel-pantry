@@ -17,7 +17,15 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.DataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.drm.DrmSessionManagerProvider
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.text.TextOutput
+import androidx.media3.exoplayer.text.TextRenderer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
@@ -41,6 +49,13 @@ class PlaybackErrorTexts(
  * load once its buffer has drained, which can be most of a minute. So the load error policy retries every
  * 1–2 s and gives up once a load has kept failing for [GIVE_UP_AFTER_MS] (see [LoadErrorBudget] for when a new
  * run of failures starts), then reports the failure itself. A Wi-Fi blip of a few seconds is ridden out; a dead server shows in about 10 s.
+ *
+ * Sidecar subtitle files never end playback: a file deleted after the scan, a failed `?shift=` or a malformed
+ * download only drops that subtitle. [SidecarTolerantSourceFactory] loads each sidecar as a
+ * `SingleSampleMediaSource` that treats load errors as end of stream, and the policy gives up on a sidecar load at
+ * once (outside the budget) and reports it through [PlayerListener.onSidecarFailed]. Sidecars then reach the
+ * text renderer unparsed, so it decodes them itself (legacy decoding); embedded tracks are still parsed during
+ * extraction.
  */
 @OptIn(UnstableApi::class)
 class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : PlayerPort {
@@ -52,6 +67,11 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
 
     private val loadErrorPolicy = object : DefaultLoadErrorHandlingPolicy() {
         override fun getRetryDelayMsFor(info: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+            val uri = info.loadEventInfo.dataSpec.uri.toString()
+            if (isSidecar(uri)) {
+                main.post { listeners.forEach { it.onSidecarFailed(uri) } }
+                return C.TIME_UNSET // end of stream for that sidecar (treatLoadErrorsAsEndOfStream), not an error
+            }
             val fatal = super.getRetryDelayMsFor(info) == C.TIME_UNSET
             val decision = budget.onError(info.loadEventInfo.bytesLoaded, SystemClock.elapsedRealtime())
             if (!fatal && decision is LoadErrorBudget.Decision.Retry) return decision.delayMs
@@ -65,9 +85,23 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
         val http = DefaultHttpDataSource.Factory()
             .setConnectTimeoutMs(5_000)
             .setReadTimeoutMs(10_000)
-        val sources = DefaultMediaSourceFactory(DefaultDataSource.Factory(context, http))
+        val data = DefaultDataSource.Factory(context, http)
+        val sources = SidecarTolerantSourceFactory(DefaultMediaSourceFactory(data), data)
             .setLoadErrorHandlingPolicy(loadErrorPolicy)
-        ExoPlayer.Builder(context)
+        val renderers = object : DefaultRenderersFactory(context) {
+            // Legacy decoding is deprecated with SingleSampleMediaSource; it is what decodes the sidecars.
+            @Suppress("DEPRECATION")
+            override fun buildTextRenderers(
+                context: Context,
+                output: TextOutput,
+                outputLooper: Looper,
+                extensionRendererMode: Int,
+                out: ArrayList<Renderer>,
+            ) {
+                out += TextRenderer(output, outputLooper).apply { experimentalSetLegacyDecodingEnabled(true) }
+            }
+        }
+        ExoPlayer.Builder(context, renderers)
             .setMediaSourceFactory(sources)
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
@@ -186,7 +220,47 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
         else -> texts.other(error.message.orEmpty(), error.javaClass.simpleName)
     }
 
+    /**
+     * Builds the stream through [main] and each sidecar as its own `SingleSampleMediaSource` whose load errors
+     * end that sidecar instead of the playback (`DefaultMediaSourceFactory` offers no such setting for sidecars).
+     */
+    // SingleSampleMediaSource is deprecated in favour of parsing subtitles during extraction, but only it can treat
+    // a sidecar's load errors as end of stream (Media3 1.5.1).
+    @Suppress("DEPRECATION")
+    private class SidecarTolerantSourceFactory(
+        private val main: DefaultMediaSourceFactory,
+        private val data: DataSource.Factory,
+    ) : MediaSource.Factory {
+        private var policy: LoadErrorHandlingPolicy = DefaultLoadErrorHandlingPolicy()
+
+        override fun setDrmSessionManagerProvider(provider: DrmSessionManagerProvider): MediaSource.Factory =
+            apply { main.setDrmSessionManagerProvider(provider) }
+
+        override fun setLoadErrorHandlingPolicy(policy: LoadErrorHandlingPolicy): MediaSource.Factory = apply {
+            this.policy = policy
+            main.setLoadErrorHandlingPolicy(policy)
+        }
+
+        override fun getSupportedTypes(): IntArray = main.supportedTypes
+
+        override fun createMediaSource(mediaItem: MediaItem): MediaSource {
+            val sidecars = mediaItem.localConfiguration?.subtitleConfigurations.orEmpty()
+            if (sidecars.isEmpty()) return main.createMediaSource(mediaItem)
+            val video = main.createMediaSource(mediaItem.buildUpon().setSubtitleConfigurations(emptyList()).build())
+            val subtitleSources = sidecars.map {
+                androidx.media3.exoplayer.source.SingleSampleMediaSource.Factory(data)
+                    .setLoadErrorHandlingPolicy(policy)
+                    .setTreatLoadErrorsAsEndOfStream(true)
+                    .createMediaSource(it, C.TIME_UNSET)
+            }
+            return MergingMediaSource(video, *subtitleSources.toTypedArray())
+        }
+    }
+
     private companion object {
+        /** Sidecar URLs are `/api/items/<id>/subtitles/sidecar/<name>` (see `tv-client-notes.md`). */
+        fun isSidecar(uri: String) = uri.contains("/subtitles/sidecar/")
+
         /** How long one load may keep failing before playback stops with an error. */
         const val GIVE_UP_AFTER_MS = 8_000L
     }

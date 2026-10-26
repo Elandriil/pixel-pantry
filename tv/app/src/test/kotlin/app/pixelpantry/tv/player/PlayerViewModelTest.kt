@@ -72,6 +72,7 @@ class PlayerViewModelTest {
     /** Bodies of `POST /api/items/4/tracks`, `.../subtitles/download`, in arrival order. */
     private val trackPosts = ConcurrentLinkedQueue<JsonObject>()
     private val downloadPosts = ConcurrentLinkedQueue<JsonObject>()
+    private var downloadDelayMs = 0L
     private var searchBody: () -> MockResponse = {
         MockResponse().setResponseCode(503).setHeader("Content-Type", "application/json")
             .setBody("""{"error":"OpenSubtitles not configured"}""")
@@ -95,6 +96,7 @@ class PlayerViewModelTest {
         noNextEpisode = "No next episode",
         noPreviousEpisode = "No previous episode",
         delaySidecarOnly = "Delay works for subtitle files only",
+        sidecarFailed = "Subtitle file could not be loaded",
         saveChoiceFailed = { "Could not save the track choice: $it" },
     )
 
@@ -125,7 +127,7 @@ class PlayerViewModelTest {
                     "GET /api/items/4/subtitles/search" -> searchBody()
                     "POST /api/items/4/subtitles/download" -> {
                         downloadPosts += Json.parseToJsonElement(request.body.readUtf8()) as JsonObject
-                        json(DOWNLOADED)
+                        json(DOWNLOADED).setHeadersDelay(downloadDelayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
                     }
                     "GET /api/items/4/subtitles" -> json("""{"tracks":[$EMBEDDED_3,$SIDECAR_EN,$DOWNLOADED]}""")
                     else -> MockResponse().setResponseCode(404)
@@ -818,17 +820,85 @@ class PlayerViewModelTest {
         vm.playing()
         port.position = 900_000
         vm.adjustSubDelay(+500)
-        assertEquals(500, vm.current().subDelayMs)
+        assertEquals("the label follows at once", 500, vm.current().subDelayMs)
+        assertEquals("not yet re-prepared", 1, port.prepared.size)
+        advanceTimeBy(PlayerViewModel.SUB_DELAY_DEBOUNCE_MS + 1)
         assertEquals(2, port.prepared.size)
         assertEquals(900_000L, port.preparedAt.last())
         assertTrue(vm.currentPlan!!.selectedSidecarUri!!.endsWith("?shift=500"))
-        vm.adjustSubDelay(+500)
-        assertTrue(vm.currentPlan!!.selectedSidecarUri!!.endsWith("?shift=1000"))
         vm.adjustSubDelay(-500)
-        vm.adjustSubDelay(-500)
+        advanceTimeBy(PlayerViewModel.SUB_DELAY_DEBOUNCE_MS + 1)
         assertEquals(0, vm.current().subDelayMs)
         assertFalse(vm.currentPlan!!.selectedSidecarUri!!.contains("shift"))
-        assertEquals(5, port.prepared.size)
+        assertEquals(3, port.prepared.size)
+    }
+
+    @Test fun quickSubDelayPressesReprepareOnce() = playerTest {
+        itemBody = subtitledItem(subtitleChoice = sidecarEn)
+        val vm = vm()
+        vm.playing()
+        repeat(3) {
+            vm.adjustSubDelay(+500)
+            advanceTimeBy(100)
+        }
+        assertEquals(1500, vm.current().subDelayMs)
+        assertEquals(1, port.prepared.size)
+        advanceTimeBy(PlayerViewModel.SUB_DELAY_DEBOUNCE_MS)
+        assertEquals(2, port.prepared.size)
+        assertTrue(vm.currentPlan!!.selectedSidecarUri!!.endsWith("?shift=1500"))
+    }
+
+    @Test fun okOnSubDelayWithASidecarDoesNothing() = playerTest {
+        itemBody = subtitledItem(subtitleChoice = sidecarEn)
+        val vm = vm()
+        vm.playing()
+        vm.adjustSubDelay(0)
+        advanceTimeBy(PlayerViewModel.SUB_DELAY_DEBOUNCE_MS + 1)
+        assertEquals(1, port.prepared.size)
+        assertNull(toaster.current.value)
+    }
+
+    @Test fun aFailedSidecarIsDroppedAndPlaybackGoesOnWithSubtitlesOff() = playerTest {
+        itemBody = subtitledItem(subtitleChoice = sidecarEn)
+        val vm = vm()
+        vm.playing()
+        port.position = 640_000
+        val uri = vm.currentPlan!!.selectedSidecarUri!!
+        port.fire { it.onSidecarFailed(uri) }
+        val s = vm.state.value
+        assertTrue("no error screen", s is UiState.Playing)
+        s as UiState.Playing
+        assertEquals("off", s.subtitleChoice)
+        assertEquals("Off", s.subtitleLabel)
+        assertEquals(listOf("embedded:3"), vm.subtitleTracks.map { it.id })
+        assertTrue(vm.currentPlan!!.subtitleConfigs.isEmpty())
+        assertEquals("re-prepared at the position", 640_000L, port.preparedAt.last())
+        assertEquals("play", port.calls.last())
+        assertEquals("Subtitle file could not be loaded", toaster.current.value)
+        tracksArrive()
+        assertNull(port.textSelections.last())
+        assertTrue("the stored choice is left alone", trackPosts.isEmpty())
+    }
+
+    @Test fun aFailedSidecarThatIsNotChosenKeepsTheChoice() = playerTest {
+        itemBody = subtitledItem(subtitleChoice = "embedded:3")
+        val vm = vm()
+        vm.playing()
+        val uri = vm.currentPlan!!.subtitleConfigs.single().uri
+        port.fire { it.onSidecarFailed(uri) }
+        assertEquals("embedded:3", vm.current().subtitleChoice)
+        assertTrue(vm.currentPlan!!.subtitleConfigs.isEmpty())
+        tracksArrive()
+        assertEquals(2, port.textSelections.last())
+    }
+
+    @Test fun aFailureForAnUnknownUriIsIgnored() = playerTest {
+        itemBody = subtitledItem(subtitleChoice = sidecarEn)
+        val vm = vm()
+        vm.playing()
+        port.fire { it.onSidecarFailed("http://elsewhere/api/items/9/subtitles/sidecar/x.srt") }
+        assertEquals(sidecarEn, vm.current().subtitleChoice)
+        assertEquals(1, port.prepared.size)
     }
 
     @Test fun adjustSubDelayIsIgnoredForEmbeddedTracks() = playerTest {
@@ -910,6 +980,39 @@ class PlayerViewModelTest {
         assertEquals(downloaded, vm.currentPlan!!.subtitleConfigs.single { it.selected }.id)
         awaitRealTime { trackPosts.isNotEmpty() }
         assertEquals(downloaded, trackPosts.single()["subtitle"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun aSecondDownloadWhileOneIsInFlightIsIgnored() = playerTest {
+        searchBody = { json("""{"results":[$OS_RESULT]}""") }
+        downloadDelayMs = 300
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        vm.openMenu(PlayerViewModel.PlayerMenu.Subtitles)
+        vm.searchOnline()
+        awaitRealTime { vm.current().online is PlayerViewModel.OnlineState.Results }
+        vm.download(42)
+        vm.download(42)
+        awaitRealTime { vm.current().subtitleChoice == downloaded }
+        withContext(Dispatchers.Default) { delay(300) }
+        assertEquals(1, downloadPosts.size)
+    }
+
+    @Test fun aDownloadFinishesAndAppliesAfterTheMenuIsClosed() = playerTest {
+        searchBody = { json("""{"results":[$OS_RESULT]}""") }
+        downloadDelayMs = 300
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        vm.openMenu(PlayerViewModel.PlayerMenu.Subtitles)
+        vm.searchOnline()
+        awaitRealTime { vm.current().online is PlayerViewModel.OnlineState.Results }
+        vm.download(42)
+        vm.closeMenu()
+        awaitRealTime { vm.current().subtitleChoice == downloaded }
+        assertNull(vm.current().menu)
+        assertEquals(PlayerViewModel.OnlineState.Idle, vm.current().online)
+        awaitRealTime { trackPosts.isNotEmpty() }
     }
 
     @Test fun anOpenMenuKeepsTheOverlayUpAndClosingRestartsTheHideTimer() = playerTest {

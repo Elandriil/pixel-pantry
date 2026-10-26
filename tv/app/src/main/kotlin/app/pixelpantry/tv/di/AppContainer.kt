@@ -69,6 +69,7 @@ class AppContainer(private val app: Application) {
             noNextEpisode = app.getString(R.string.player_no_next_episode),
             noPreviousEpisode = app.getString(R.string.player_no_previous_episode),
             delaySidecarOnly = app.getString(R.string.player_delay_sidecar_only),
+            sidecarFailed = app.getString(R.string.player_sidecar_failed),
             saveChoiceFailed = { app.getString(R.string.player_save_choice_failed, it) },
         )
     }

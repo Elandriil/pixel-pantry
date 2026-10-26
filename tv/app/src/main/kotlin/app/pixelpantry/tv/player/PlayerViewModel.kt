@@ -59,6 +59,8 @@ class PlayerViewModel(
         val noPreviousEpisode: String,
         /** Sub delay pressed with an embedded track or none. */
         val delaySidecarOnly: String,
+        /** A sidecar file failed to load; playback went on without it. */
+        val sidecarFailed: String,
         /** Saving the track choice failed; the argument is the server's message. */
         val saveChoiceFailed: (String) -> String,
     )
@@ -151,6 +153,12 @@ class PlayerViewModel(
     private var pendingText: String? = null
     private var pendingAudio: String? = null
     private var searchJob: Job? = null
+
+    /** An OpenSubtitles download; outlives the menu (it applies even after BACK) and blocks a second one. */
+    private var downloadJob: Job? = null
+
+    /** The re-prepare for a sub delay change, [SUB_DELAY_DEBOUNCE_MS] after the last press. */
+    private var delayJob: Job? = null
     private var persistJob: Job? = null
 
     private val listener = object : PlayerListener {
@@ -179,6 +187,8 @@ class PlayerViewModel(
         override fun onPlayerError(message: String) = fail(message)
 
         override fun onTracksChanged() = applyPendingTracks()
+
+        override fun onSidecarFailed(uri: String) = dropSidecar(uri)
     }
 
     init {
@@ -215,6 +225,7 @@ class PlayerViewModel(
         currentItemId = d.item.id
         detail = d
         searchJob?.cancel()
+        delayJob?.cancel()
         // The stored choices are restored when they still name a track; the delay starts at 0 for every item.
         val plan = SubtitlePlan.build(d, api::resolve, d.subtitleChoice, shiftMs = 0)
         currentPlan = plan
@@ -293,6 +304,7 @@ class PlayerViewModel(
         val d = detail ?: return
         if (isSwitching || exiting) return
         if (id != OFF && d.subtitles.none { it.id == id }) return
+        delayJob?.cancel()
         val delay = if (id == s.subtitleChoice) s.subDelayMs else 0
         updatePlaying { it.copy(subtitleChoice = id, subtitleLabel = subtitleLabel(d, id), subDelayMs = delay) }
         if (SubtitlePlan.isSidecar(id)) {
@@ -317,24 +329,57 @@ class PlayerViewModel(
 
     /**
      * Sub delay ±: re-times the chosen sidecar by [deltaMs] (the server shifts the file, `?shift=`); a no-op with
-     * a toast for embedded tracks or none. Resets with every item.
+     * a toast for embedded tracks or none (also for [deltaMs] 0, OK on the button). The label follows each press
+     * at once; the item re-prepares [SUB_DELAY_DEBOUNCE_MS] after the last one, so quick presses re-prepare
+     * once. Resets with every item.
      */
     fun adjustSubDelay(deltaMs: Int) {
         val s = _state.value as? UiState.Playing ?: return
-        val d = detail ?: return
         if (isSwitching || exiting) return
         if (!SubtitlePlan.isSidecar(s.subtitleChoice)) {
             toaster.show(strings.delaySidecarOnly)
             showOverlay()
             return
         }
-        val delay = s.subDelayMs + deltaMs
-        updatePlaying { it.copy(subDelayMs = delay) }
-        reprepare(d, s.subtitleChoice, delay)
         showOverlay()
+        if (deltaMs == 0) return
+        updatePlaying { it.copy(subDelayMs = it.subDelayMs + deltaMs) }
+        delayJob?.cancel()
+        delayJob = viewModelScope.launch {
+            delay(SUB_DELAY_DEBOUNCE_MS)
+            val now = _state.value as? UiState.Playing ?: return@launch
+            val d = detail ?: return@launch
+            if (isSwitching || exiting || !SubtitlePlan.isSidecar(now.subtitleChoice)) return@launch
+            reprepare(d, now.subtitleChoice, now.subDelayMs)
+        }
     }
 
-    /** Rebuilds the MediaItem with sidecar [choice] at [shiftMs] and prepares it where playback is now. */
+    /**
+     * Sidecar [uri] failed to load (deleted after the scan, a failed shift, a malformed download): playback goes
+     * on; that sidecar leaves the item's tracks and the MediaItem (re-prepared where playback is). Its choice
+     * falls back to off; another chosen track stays.
+     */
+    private fun dropSidecar(uri: String) {
+        val s = _state.value as? UiState.Playing ?: return
+        val d = detail ?: return
+        if (isSwitching || exiting) return
+        val failed = currentPlan?.subtitleConfigs?.firstOrNull { it.uri == uri } ?: return
+        val remaining = d.copy(subtitles = d.subtitles.filter { it.id != failed.id })
+        detail = remaining
+        val choice = if (s.subtitleChoice == failed.id) OFF else s.subtitleChoice
+        val delay = if (choice == s.subtitleChoice) s.subDelayMs else 0
+        delayJob?.cancel()
+        updatePlaying {
+            it.copy(detail = remaining, subtitleChoice = choice, subtitleLabel = subtitleLabel(remaining, choice), subDelayMs = delay)
+        }
+        reprepare(remaining, choice, delay)
+        toaster.show(strings.sidecarFailed)
+    }
+
+    /**
+     * Rebuilds the MediaItem for subtitle [choice] (the chosen sidecar shifted by [shiftMs]) and prepares it where
+     * playback is now.
+     */
     private fun reprepare(d: ItemDetail, choice: String, shiftMs: Int) {
         val s = _state.value as? UiState.Playing ?: return
         val plan = SubtitlePlan.build(d, api::resolve, choice, shiftMs)
@@ -373,7 +418,7 @@ class PlayerViewModel(
 
     /** BACK in a menu: closes it; the overlay hides again after [OVERLAY_HIDE_MS]. */
     fun closeMenu() {
-        searchJob?.cancel()
+        searchJob?.cancel() // a download in flight goes on and applies
         updatePlaying { it.copy(menu = null, online = OnlineState.Idle) }
         showOverlay()
     }
@@ -396,19 +441,27 @@ class PlayerViewModel(
 
     /**
      * Downloads OpenSubtitles file [fileId] next to the video, refreshes the item's tracks and shows the new one at
-     * once; the results stay up so another pick is one click away.
+     * once; the results stay up so another pick is one click away. Ignored while a download is in flight (each
+     * one spends the OpenSubtitles quota); one in flight finishes and applies even if the menu was closed.
      */
     fun download(fileId: Long) {
         val s = _state.value as? UiState.Playing ?: return
+        if (downloadJob?.isActive == true) return
         val results = (s.online as? OnlineState.Results)?.results.orEmpty()
         val itemId = currentItemId
         searchJob?.cancel()
         updatePlaying { it.copy(online = OnlineState.Results(results, applied = null, downloading = true)) }
-        searchJob = viewModelScope.launch {
+        downloadJob = viewModelScope.launch {
             val track = try {
                 api.downloadSubtitle(itemId, fileId)
             } catch (e: ApiException) {
-                if (currentItemId == itemId) updatePlaying { it.copy(online = OnlineState.Error(e.message.orEmpty())) }
+                if (currentItemId != itemId) return@launch
+                val message = e.message.orEmpty()
+                if (_state.value.let { it is UiState.Playing && it.menu == PlayerMenu.Subtitles }) {
+                    updatePlaying { it.copy(online = OnlineState.Error(message)) }
+                } else {
+                    toaster.show(message)
+                }
                 return@launch
             }
             val tracks = try {
@@ -423,7 +476,9 @@ class PlayerViewModel(
             detail = refreshed
             updatePlaying { it.copy(detail = refreshed) }
             selectSubtitle(track.id)
-            updatePlaying { it.copy(online = OnlineState.Results(results, applied = track.label)) }
+            updatePlaying {
+                if (it.menu == PlayerMenu.Subtitles) it.copy(online = OnlineState.Results(results, applied = track.label)) else it
+            }
         }
     }
 
@@ -470,6 +525,7 @@ class PlayerViewModel(
             return
         }
         isSwitching = true
+        delayJob?.cancel()
         tickerJob?.cancel()
         port.pause()
         // Sent even while the duration is unknown (as 0): the server ignores the duration then but keeps the session.
@@ -591,6 +647,7 @@ class PlayerViewModel(
     fun stopAndExit() {
         if (exiting) return
         exiting = true
+        delayJob?.cancel()
         loadJob?.cancel()
         tickerJob?.cancel()
         hideJob?.cancel()
@@ -672,6 +729,9 @@ class PlayerViewModel(
     companion object {
         const val TICK_MS = 500L
         const val OVERLAY_HIDE_MS = 4_000L
+
+        /** Sub delay presses closer together than this re-prepare the item once. */
+        const val SUB_DELAY_DEBOUNCE_MS = 400L
 
         /** A pending text choice: the embedded track the file flags as default, else off. */
         private const val PLAYER_DEFAULT = "player-default"

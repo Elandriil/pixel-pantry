@@ -169,4 +169,48 @@ class SubtitlePlanTest {
         assertEquals(4, SubtitlePlan.audioGroup("audio:2", detail(), audio))
         assertNull(SubtitlePlan.audioGroup("audio:7", detail(), audio))
     }
+
+    // When the player shows a different number of embedded text groups than the server lists
+
+    private fun lang(group: Int, id: String?, language: String?, default: Boolean = false) =
+        PlayerTrack(groupIndex = group, id = id, language = language, label = null, isDefault = default, selected = false)
+
+    private val threeEmbedded = detail(
+        subtitles = listOf(
+            SubtitleTrack(id = "embedded:2", label = "English", lang = "eng", format = "embedded"),
+            SubtitleTrack(id = "embedded:3", label = "English SDH", lang = "eng", format = "embedded"),
+            SubtitleTrack(id = "embedded:4", label = "Deutsch", lang = "ger", format = "embedded"),
+            srt,
+        ),
+    )
+
+    @Test fun withAMissingGroupTracksMatchByLanguageAndPositionWithinIt() {
+        // The player dropped the first English stream; ids are arbitrary here.
+        val tracks = listOf(lang(5, "0:9", "en"), lang(6, "0:8", "de"), lang(7, "1:sidecar:Show%20S01E01.en.srt", "en"))
+        assertEquals("first English group is matched to the first English track", 5, SubtitlePlan.textGroup("embedded:2", threeEmbedded, tracks))
+        assertNull("no second English group", SubtitlePlan.textGroup("embedded:3", threeEmbedded, tracks))
+        assertEquals("ger and de are the same language", 6, SubtitlePlan.textGroup("embedded:4", threeEmbedded, tracks))
+    }
+
+    @Test fun withoutLanguagesTracksMatchByIdOfStreamIndexPlusOne() {
+        val noLang = threeEmbedded.copy(subtitles = threeEmbedded.subtitles.map { it.copy(lang = null) })
+        val tracks = listOf(lang(5, "0:4", null), lang(6, "0:5", null))
+        assertEquals(5, SubtitlePlan.textGroup("embedded:3", noLang, tracks))
+        assertEquals(6, SubtitlePlan.textGroup("embedded:4", noLang, tracks))
+        assertNull("nothing matches: nothing is selected", SubtitlePlan.textGroup("embedded:2", noLang, tracks))
+    }
+
+    @Test fun theDefaultFlagUsesTheSameGuard() {
+        val tracks = listOf(lang(5, "0:9", "en"), lang(6, "0:8", "de", default = true))
+        assertEquals("embedded:4", SubtitlePlan.defaultEmbeddedId(threeEmbedded, tracks))
+    }
+
+    @Test fun languageCodesNormalise() {
+        assertEquals("en", SubtitlePlan.normalizeLanguage("eng"))
+        assertEquals("en", SubtitlePlan.normalizeLanguage("en-US"))
+        assertEquals("de", SubtitlePlan.normalizeLanguage("ger"))
+        assertEquals("de", SubtitlePlan.normalizeLanguage("deu"))
+        assertNull(SubtitlePlan.normalizeLanguage("und"))
+        assertNull(SubtitlePlan.normalizeLanguage(null))
+    }
 }

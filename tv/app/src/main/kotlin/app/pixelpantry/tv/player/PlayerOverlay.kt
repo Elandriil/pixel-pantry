@@ -54,7 +54,7 @@ sealed interface OverlayAction {
     data object Next : OverlayAction
     data object Audio : OverlayAction
     data object Subtitles : OverlayAction
-    /** LEFT/RIGHT on the Sub delay button: ∓0.5 s. */
+    /** LEFT/RIGHT on the Sub delay button: ∓0.5 s; OK on it: 0. */
     data class SubDelay(val deltaMs: Int) : OverlayAction
 }
 
@@ -148,23 +148,27 @@ fun PlayerOverlay(
                     modifier = Modifier.focusRequester(subtitlesFocus),
                     interactive = interactive,
                 ) { onAction(OverlayAction.Subtitles) }
-                // LEFT/RIGHT on this button change the delay; the player's key mapping passes them through to it.
+                // With a subtitle file chosen, LEFT/RIGHT on this button change the delay (the player's key
+                // mapping passes them through to it); otherwise they move focus as usual. OK explains when the
+                // delay does not apply.
+                val delayable = SubtitlePlan.isSidecar(state.subtitleChoice)
                 OverlayButton(
                     stringResource(R.string.player_sub_delay, formatSubDelay(state.subDelayMs)),
                     modifier = Modifier.onPreviewKeyEvent { e ->
+                        if (!delayable) return@onPreviewKeyEvent false
                         val delta = when (e.key) {
                             Key.DirectionLeft -> -SUB_DELAY_STEP_MS
                             Key.DirectionRight -> SUB_DELAY_STEP_MS
                             else -> return@onPreviewKeyEvent false
                         }
-                        // One step per press: a held key would re-prepare the item many times a second.
+                        // One step per press (a held key does not repeat); the view model debounces re-prepares.
                         if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) {
                             onAction(OverlayAction.SubDelay(delta))
                         }
                         true
                     },
                     interactive = interactive,
-                ) {}
+                ) { onAction(OverlayAction.SubDelay(0)) }
             }
         }
     }

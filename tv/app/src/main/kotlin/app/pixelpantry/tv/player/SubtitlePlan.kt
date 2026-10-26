@@ -89,25 +89,69 @@ object SubtitlePlan {
     fun isSidecar(id: String): Boolean = id.startsWith(SIDECAR)
 
     /**
-     * The player's text group for subtitle [id], or null when it has none. A sidecar's group carries its id. An
-     * embedded track is found by order: the player's embedded text groups (those that are not sidecars) come in
-     * stream order, like the item's embedded tracks. The container's own track ids are not the server's stream
-     * indices (Matroska numbers tracks from 1 across all types: stream 1 shows as `0:2`), so they are not
-     * compared.
+     * The player's text group for subtitle [id], or null when it has none. A sidecar's group carries its id
+     * (behind the period prefix, see [unprefixed]); embedded tracks are matched by [embeddedGroups].
      */
     fun textGroup(id: String, detail: ItemDetail, tracks: List<PlayerTrack>): Int? {
         if (isSidecar(id)) return tracks.firstOrNull { it.id?.let(::unprefixed) == id }?.groupIndex
-        val ordinal = detail.subtitles.filter { it.isEmbedded }.indexOfFirst { it.id == id }
-        if (ordinal < 0) return null
-        return embeddedGroups(tracks).getOrNull(ordinal)?.groupIndex
+        return embeddedGroups(detail, tracks)[id]
     }
 
     /** The id of the embedded track the player's flags name the default (the server does not send the flag). */
     fun defaultEmbeddedId(detail: ItemDetail, tracks: List<PlayerTrack>): String? {
-        val ordinal = embeddedGroups(tracks).indexOfFirst { it.isDefault }
-        if (ordinal < 0) return null
-        return detail.subtitles.filter { it.isEmbedded }.getOrNull(ordinal)?.id
+        val defaults = tracks.filter { it.isDefault }.map { it.groupIndex }.toSet()
+        return embeddedGroups(detail, tracks).entries.firstOrNull { it.value in defaults }?.key
     }
+
+    /**
+     * The item's embedded subtitle ids mapped to the player's embedded text groups (those that are not
+     * sidecars). When both lists are equally long they pair up by order: both come in stream order. The
+     * container's track ids are not the server's stream indices (Matroska numbers tracks from 1 across all
+     * types: stream 1 shows as `0:2`), so order is the reliable key. When the player shows a different number of
+     * groups, a track is matched by its language and its position among the tracks of that language, else by a
+     * track id of stream index + 1; a track that matches neither has no group (nothing is selected for it).
+     */
+    fun embeddedGroups(detail: ItemDetail, tracks: List<PlayerTrack>): Map<String, Int> {
+        val entries = detail.subtitles.filter { it.isEmbedded }
+        val groups = tracks.filter { it.id?.let { id -> isSidecar(unprefixed(id)) } != true }
+        if (entries.size == groups.size) return entries.zip(groups).associate { (e, g) -> e.id to g.groupIndex }
+        val result = mutableMapOf<String, Int>()
+        entries.forEach { e ->
+            val lang = normalizeLanguage(e.lang)
+            val byLanguage = if (lang == null) null else {
+                val position = entries.filter { normalizeLanguage(it.lang) == lang }.indexOf(e)
+                groups.filter { normalizeLanguage(it.language) == lang }.getOrNull(position)
+            }
+            val byId = streamIndex(e)?.let { index -> groups.firstOrNull { it.id?.let(::unprefixed) == "${index + 1}" } }
+            (byLanguage ?: byId)?.let { result[e.id] = it.groupIndex }
+        }
+        return result
+    }
+
+    /**
+     * A language code as ISO 639-1 where one exists (`eng`, `en`, `en-US` → `en`; `ger`, `deu` → `de`); null
+     * for none or undetermined.
+     */
+    internal fun normalizeLanguage(code: String?): String? {
+        val c = code?.trim()?.lowercase()?.substringBefore('-')?.substringBefore('_')
+        if (c.isNullOrEmpty() || c == "und") return null
+        if (c.length != 3) return c
+        BIBLIOGRAPHIC[c]?.let { return it }
+        return ISO3_TO_ISO1[c] ?: c
+    }
+
+    private val ISO3_TO_ISO1: Map<String, String> by lazy {
+        java.util.Locale.getISOLanguages().mapNotNull { l ->
+            runCatching { java.util.Locale(l).isO3Language }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { it to l }
+        }.toMap()
+    }
+
+    /** ISO 639-2/B codes (common in Matroska files) that differ from the terminology codes `Locale` knows. */
+    private val BIBLIOGRAPHIC = mapOf(
+        "alb" to "sq", "arm" to "hy", "baq" to "eu", "bur" to "my", "chi" to "zh", "cze" to "cs", "dut" to "nl",
+        "fre" to "fr", "geo" to "ka", "ger" to "de", "gre" to "el", "ice" to "is", "mac" to "mk", "mao" to "mi",
+        "may" to "ms", "per" to "fa", "rum" to "ro", "slo" to "sk", "tib" to "bo", "wel" to "cy",
+    )
 
     /** The player's audio group for `audio:<index>`, by order like [textGroup]. */
     fun audioGroup(id: String, detail: ItemDetail, tracks: List<PlayerTrack>): Int? {
@@ -115,9 +159,6 @@ object SubtitlePlan {
         if (ordinal < 0) return null
         return tracks.getOrNull(ordinal)?.groupIndex
     }
-
-    private fun embeddedGroups(tracks: List<PlayerTrack>) =
-        tracks.filter { it.id?.let { id -> isSidecar(unprefixed(id)) } != true }
 
     /**
      * A player format id without the period prefix ExoPlayer adds when it merges the video with sidecar files

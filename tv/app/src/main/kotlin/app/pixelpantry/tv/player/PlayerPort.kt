@@ -57,6 +57,9 @@ interface PlayerListener {
     /** [PlayerPort.textTracks] / [PlayerPort.audioTracks] or their selection changed. */
     fun onTracksChanged() {}
 
+    /** Sidecar file [uri] could not be loaded; playback goes on without it. */
+    fun onSidecarFailed(uri: String) {}
+
     /** Playback stopped for good; [message] is plain words for the error screen. */
     fun onPlayerError(message: String) {}
 }
