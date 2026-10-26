@@ -231,6 +231,7 @@ export class Scanner {
       await this.matchShow(show);
       show = repo.getShow(showId)!;
     }
+    show = this.mergeIntoCanonical(show);
 
     const counts =
       show.tmdb_id === null
@@ -252,6 +253,23 @@ export class Scanner {
       if (![...ids].some((id) => this.shouldMatch(repo.getItem(id)!))) continue;
       await this.fetchSeasonMeta(show, show.tmdb_id, season, ids);
     }
+  }
+
+  /**
+   * Two parsed keys (`Doctor Who`, `Doctor Who 2005`) can match the same TMDB show: fold this one into the oldest
+   * show of the category with that TMDB id. The merged row stays hidden and keeps its tmdb_id, so later scans of its
+   * files land here again.
+   */
+  private mergeIntoCanonical(show: ShowRow): ShowRow {
+    const { repo, log } = this.deps;
+    if (show.tmdb_id === null) return show;
+    const canonical = repo.getShowByTmdbId(show.tmdb_id, show.category);
+    if (!canonical || canonical.id === show.id) return show;
+    if (show.deleted_at === null) {
+      log.info("merging duplicate show", { from: show.parsed_key, into: canonical.parsed_key, tmdbId: show.tmdb_id });
+    }
+    repo.mergeShowInto(show.id, canonical.id, this.now());
+    return repo.getShow(canonical.id)!;
   }
 
   /** Only overrides of the right kind apply: a movie override never feeds tvDetails and vice versa. */

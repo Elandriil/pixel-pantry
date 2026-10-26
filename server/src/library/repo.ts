@@ -128,6 +128,14 @@ export class Repo {
       filesForItem: p("SELECT * FROM files WHERE item_id = ? ORDER BY id"),
 
       showByKey: p("SELECT * FROM shows WHERE parsed_key = ?"),
+      showByTmdbId: p("SELECT * FROM shows WHERE tmdb_id = ? AND category = ? ORDER BY id LIMIT 1"),
+      itemsOfShowAll: p("SELECT * FROM items WHERE show_id = ? ORDER BY id"),
+      itemReparent: p("UPDATE items SET show_id = ? WHERE id = ?"),
+      filesMoveItem: p("UPDATE files SET item_id = ? WHERE item_id = ?"),
+      playbackMoveItem: p(
+        "UPDATE playback SET item_id = ?1 WHERE item_id = ?2 AND NOT EXISTS (SELECT 1 FROM playback WHERE item_id = ?1)",
+      ),
+      sessionsMoveItem: p("UPDATE sessions SET item_id = ? WHERE item_id = ?"),
       showGet: p("SELECT * FROM shows WHERE id = ?"),
       showMatchError: p("UPDATE shows SET match_error = ?, match_attempted_at = ? WHERE id = ?"),
       showDeleted: p("UPDATE shows SET deleted_at = ? WHERE id = ?"),
@@ -273,6 +281,36 @@ export class Repo {
 
   getShow(id: number): ShowRow | null {
     return (this.q.showGet!.get(id) as ShowRow | null) ?? null;
+  }
+
+  /** The oldest show of `category` with this TMDB id (hidden or not): the one duplicates merge into. */
+  getShowByTmdbId(tmdbId: number, category: string): ShowRow | null {
+    return (this.q.showByTmdbId!.get(tmdbId, category) as ShowRow | null) ?? null;
+  }
+
+  /**
+   * Folds show `fromId` into `toId` and hides `fromId`. An item of `from` whose (season, episode) `to` already has
+   * gives its files (and its playback, if `to`'s item has none, and its sessions) to that item and is hidden;
+   * every other item is re-parented to `to`.
+   */
+  mergeShowInto(fromId: number, toId: number, now: number): void {
+    this.db.transaction(() => {
+      for (const item of this.q.itemsOfShowAll!.all(fromId) as ItemRow[]) {
+        const dup =
+          item.season_number !== null && item.episode_number !== null
+            ? this.getEpisode(toId, item.season_number, item.episode_number)
+            : null;
+        if (!dup) {
+          this.q.itemReparent!.run(toId, item.id);
+          continue;
+        }
+        this.q.filesMoveItem!.run(dup.id, item.id);
+        this.q.playbackMoveItem!.run(dup.id, item.id);
+        this.q.sessionsMoveItem!.run(dup.id, item.id);
+        this.q.itemDeleted!.run(now, item.id);
+      }
+      this.q.showDeleted!.run(now, fromId);
+    })();
   }
 
   insertShow(s: NewShow, now: number): number {

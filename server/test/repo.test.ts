@@ -199,3 +199,37 @@ test("setItemMatchError and moveEpisode keep the item id and reset episode meta"
   expect(repo.getEpisode(show, 2, 1)!.id).toBe(ep);
   expect(repo.getEpisode(show, 1, 13)).toBeNull();
 });
+
+test("mergeShowInto moves duplicate episodes' files to the target, re-parents the rest, hides the source", () => {
+  const db = openDb(":memory:");
+  const repo = new Repo(db);
+  const ep = (showId: number, e: number) =>
+    repo.insertItem(
+      { type: "episode", category: "tv", show_id: showId, season_number: 1, episode_number: e, parsed_title: "Doctor Who", title: `E${e}` },
+      1,
+    );
+  const to = repo.insertShow({ category: "tv", parsed_key: "tv:doctor who:", parsed_title: "Doctor Who", title: "Doctor Who", tmdb_id: 57243 }, 1);
+  const from = repo.insertShow({ category: "tv", parsed_key: "tv:doctor who:2005", parsed_title: "Doctor Who", title: "Doctor Who", tmdb_id: 57243 }, 2);
+  const toE1 = ep(to, 1);
+  const fromE1 = ep(from, 1);
+  const fromE2 = ep(from, 2);
+  const f1 = repo.upsertFile(file("tv/a/Doctor Who S01E01.mkv"));
+  const f1b = repo.upsertFile(file("tv/b/Doctor.Who.2005.S01E01.mkv"));
+  const f2 = repo.upsertFile(file("tv/b/Doctor.Who.2005.S01E02.mkv"));
+  repo.setFileItem(f1, toE1);
+  repo.setFileItem(f1b, fromE1);
+  repo.setFileItem(f2, fromE2);
+  db.run("INSERT INTO playback(item_id, position, duration, watched) VALUES (?, 600, 2700, 0)", [fromE1]);
+
+  expect(repo.getShowByTmdbId(57243, "tv")!.id).toBe(to);
+  expect(repo.getShowByTmdbId(57243, "anime")).toBeNull();
+  repo.mergeShowInto(from, to, 99);
+
+  expect(repo.filesForItem(toE1).map((f) => f.id)).toEqual([f1, f1b]);
+  expect(repo.getItem(fromE1)!.deleted_at).toBe(99);
+  expect(repo.getItem(fromE2)).toMatchObject({ show_id: to, deleted_at: null });
+  expect(repo.filesForItem(fromE2).map((f) => f.id)).toEqual([f2]);
+  expect(repo.listEpisodes(to).map((i) => i.id)).toEqual([toE1, fromE2]);
+  expect(repo.getShow(from)!.deleted_at).toBe(99);
+  expect((db.query("SELECT item_id FROM playback").all() as { item_id: number }[]).map((r) => r.item_id)).toEqual([toE1]);
+});

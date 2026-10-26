@@ -72,6 +72,33 @@ function fallbackEpisode(stem: string): EpisodeMatch | null {
   return null;
 }
 
+/** A season marker at the end of an anime title: `S2`, `2nd Season`, `Season 2`, `Part 2`. */
+const SEASON_MARKER = String.raw`(?:S(\d{1,2})|(\d{1,2})(?:st|nd|rd|th)\s+Season|Season\s+(\d{1,2})|Part\s+(\d{1,2}))`;
+const TITLE_SEASON = new RegExp(String.raw`^(.+?)\s+${SEASON_MARKER}$`, "i");
+const RELEASE_SEASON = new RegExp(String.raw`^(.+?)\s+${SEASON_MARKER}\s+-\s+(\d{1,4})(?:v\d+)?(?:\s|$)`, "i");
+const RELEASE_ABSOLUTE_4 = /^(.+?)\s+-\s+(\d{4})(?:v\d+)?(?:\s|$)/;
+
+const markerSeason = (m: RegExpExecArray): number => Number(m[2] ?? m[3] ?? m[4] ?? m[5]);
+
+/** `Title S2` -> { title: "Title", season: 2 }, or null without a trailing season marker. */
+function splitSeasonMarker(title: string): { title: string; season: number } | null {
+  const m = TITLE_SEASON.exec(title);
+  return m ? { title: m[1]!.trim(), season: markerSeason(m) } : null;
+}
+
+/**
+ * Anime release names the generic parser gets wrong: `Title S2 - 03` / `Title 2nd Season - 03` / `Title Part 2 - 03`
+ * (season marker, then the episode) and `Title - 1100` (a 4-digit absolute episode, not S11E00).
+ */
+function animeRelease(stem: string): { title: string; season: number | null; episodes: number[] } | null {
+  const s = stem.replace(/\[[^\]]*\]|\([^)]*\)/g, " ").replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  let m = RELEASE_SEASON.exec(s);
+  if (m) return { title: m[1]!.trim(), season: markerSeason(m), episodes: [Number(m[6])] };
+  m = RELEASE_ABSOLUTE_4.exec(s);
+  if (m) return { title: m[1]!.trim(), season: null, episodes: [Number(m[2])] };
+  return null;
+}
+
 export function parseVideoPath(relPath: string): ParsedVideo | null {
   const parts = relPath.split("/").filter(Boolean);
   const category = parts[0] as Category;
@@ -89,8 +116,9 @@ export function parseVideoPath(relPath: string): ParsedVideo | null {
   }
   const libAny = lib as { title?: string; year?: string | number; seasons?: number[]; episodeNumbers?: number[] } | null;
 
-  let episodes = kind === "episode" ? [...(libAny?.episodeNumbers ?? [])] : [];
-  let season: number | null = libAny?.seasons?.[0] ?? null;
+  const anime = category === "anime" ? animeRelease(stem) : null;
+  let episodes = anime ? anime.episodes : kind === "episode" ? [...(libAny?.episodeNumbers ?? [])] : [];
+  let season: number | null = anime ? anime.season : libAny?.seasons?.[0] ?? null;
   let markerIndex = -1;
   if (kind === "episode" && episodes.length === 0) {
     const fb = fallbackEpisode(stem);
@@ -109,7 +137,7 @@ export function parseVideoPath(relPath: string): ParsedVideo | null {
   if (kind === "movie") season = null;
 
   const titleFolder = [...folders].reverse().find((f) => seasonFromFolder(f) === null);
-  let title = (libAny?.title ?? "").replace(/[._]/g, " ").replace(/\s+/g, " ").trim();
+  let title = (anime?.title ?? libAny?.title ?? "").replace(/[._]/g, " ").replace(/\s+/g, " ").trim();
   if (!title && titleFolder) title = cleanFolderTitle(titleFolder);
   if (!title) {
     const head = markerIndex > 0 ? stem.slice(0, markerIndex) : stem;
@@ -119,6 +147,21 @@ export function parseVideoPath(relPath: string): ParsedVideo | null {
 
   let year: number | null = libAny?.year ? Number(libAny.year) || null : null;
   if (year === null && titleFolder) year = folderYear(titleFolder);
+
+  // `Doctor Who 2005`: a trailing year that is the parsed year (or, for episodes, the only year) is not part of
+  // the title, so `Doctor.Who.2005.S01E01` and `Doctor Who (2005)/...` group as one show. `Blade Runner 2049 (2017)` keeps it.
+  const ty = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(title);
+  if (ty && (year === Number(ty[2]) || (year === null && kind === "episode"))) {
+    title = ty[1]!;
+    year = Number(ty[2]);
+  }
+  if (category === "anime" && season === null) {
+    const split = splitSeasonMarker(title);
+    if (split) {
+      title = split.title;
+      season = split.season;
+    }
+  }
 
   const absolute = category === "anime" && season === null && episodes.length > 0;
   return {

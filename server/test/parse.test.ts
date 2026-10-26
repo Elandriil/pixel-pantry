@@ -16,6 +16,16 @@ const rows: [string, string, number | null, number | null, number[], boolean][] 
   ["movies/Dune.Part.Two.mkv", "Dune Part Two", null, null, [], false],
   ["anime/Frieren/Frieren - 28v2.mkv", "Frieren", null, null, [28], true],
   ["tv/Weird Folder/clip.mkv", "Weird Folder", null, null, [], false],
+  ["tv/Doctor.Who.2005.S01E01.mkv", "Doctor Who", 2005, 1, [1], false],
+  ["tv/Doctor Who (2005)/Season 01/Doctor.Who.2005.S01E02.mkv", "Doctor Who", 2005, 1, [2], false],
+  ["movies/Blade Runner 2049 (2017)/Blade.Runner.2049.2017.1080p.mkv", "Blade Runner 2049", 2017, null, [], false],
+  ["anime/[Grp] Frieren S2 - 03.mkv", "Frieren", null, 2, [3], false],
+  ["anime/Kusuriya no Hitorigoto 2nd Season - 03.mkv", "Kusuriya no Hitorigoto", null, 2, [3], false],
+  ["anime/Frieren Season 2 - 03.mkv", "Frieren", null, 2, [3], false],
+  ["anime/[Grp] Frieren Part 2 - 03 (1080p).mkv", "Frieren", null, 2, [3], false],
+  ["anime/Frieren S2/Frieren S2 E03.mkv", "Frieren", null, 2, [3], false],
+  ["anime/One Piece - 1100.mkv", "One Piece", null, null, [1100], true],
+  ["anime/[SubsPlease] One Piece - 1100 (1080p) [ABCD].mkv", "One Piece", null, null, [1100], true],
 ];
 
 test.each(rows)("parseVideoPath %s", (path, title, year, season, episodes, absolute) => {

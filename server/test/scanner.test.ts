@@ -320,6 +320,38 @@ test("low-confidence match sets tmdb_id and names the match in match_error; a la
   expect(movie.match_error).toBe("Low-confidence match: Spirited Away");
 });
 
+test("two parsed keys matching the same TMDB show end up as one show with all episodes", async () => {
+  const ctx = setup();
+  ctx.tmdb.tvSearchResults = [{ id: 57243, title: "Doctor Who", originalTitle: null, year: 2005, popularity: 90 }];
+  ctx.tmdb.tvDetailsById[57243] = tvDetails(57243, "Doctor Who", [[1, 13]]);
+  ctx.tmdb.seasonsByIdAndNumber["57243:1"] = season(1, [1, 2, 3], 7000);
+  const a = ctx.file("tv/Doctor Who/Season 01/Doctor Who S01E01.mkv"); // key tv:doctor who:
+  const b = ctx.file("tv/Doctor Who (2005)/Doctor Who S01E02.mkv"); // key tv:doctor who:2005
+  const c = ctx.file("tv/Doctor Who (2005)/Doctor Who S01E01 Proper.mkv"); // same episode as a, other key
+  await ctx.scanner.scan();
+
+  const shows = ctx.repo.listShows("tv");
+  // the (2005) folder sorts first, so its show is the older row the other key folds into
+  expect(shows.map((s) => [s.parsed_key, s.tmdb_id])).toEqual([["tv:doctor who:2005", 57243]]);
+  const merged = ctx.repo.getShowByKey("tv:doctor who:")!;
+  expect(merged.deleted_at).not.toBeNull();
+  expect(ctx.repo.listEpisodes(merged.id)).toEqual([]);
+  const eps = ctx.repo.listEpisodes(shows[0]!.id);
+  expect(eps.map((e) => [e.season_number, e.episode_number, e.title])).toEqual([[1, 1, "Ep title 1"], [1, 2, "Ep title 2"]]);
+  expect(ctx.repo.getFileByPath(a)!.item_id).toBe(eps[0]!.id);
+  expect(ctx.repo.getFileByPath(c)!.item_id).toBe(eps[0]!.id);
+  expect(ctx.repo.getFileByPath(b)!.item_id).toBe(eps[1]!.id);
+
+  // later scans keep it merged and do not search again for the hidden duplicate
+  const calls = ctx.tmdb.calls.searchTv;
+  ctx.file("tv/Doctor Who (2005)/Doctor Who S01E03.mkv");
+  ctx.clock.t += DAY;
+  await ctx.scanner.scan();
+  expect(ctx.tmdb.calls.searchTv).toBe(calls);
+  expect(ctx.repo.listShows("tv").map((s) => s.id)).toEqual([shows[0]!.id]);
+  expect(ctx.repo.listEpisodes(shows[0]!.id).map((e) => e.episode_number)).toEqual([1, 2, 3]);
+});
+
 test("unparseable file still becomes an item under folder title", async () => {
   const ctx = setup();
   const rel = ctx.file("tv/Weird Folder/clip.mkv");
