@@ -3,3 +3,10 @@ server/node_modules/
 server/data/
 server/dist/
 .DS_Store
+tv/.gradle/
+tv/build/
+tv/app/build/
+tv/local.properties
+tv/.idea/
+*.iml
+tv/.kotlin/

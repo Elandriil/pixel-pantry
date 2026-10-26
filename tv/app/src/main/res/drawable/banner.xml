@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 320x180 TV launcher banner: dark field with an amber shelf mark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path
+        android:fillColor="#FF0E0F13"
+        android:pathData="M0,0h320v180h-320z" />
+    <path
+        android:fillColor="#FF13151B"
+        android:pathData="M100,40h120a8,8 0,0 1,8 8v84a8,8 0,0 1,-8 8h-120a8,8 0,0 1,-8 -8v-84a8,8 0,0 1,8 -8z" />
+    <path
+        android:fillColor="#FFE5A50A"
+        android:pathData="M108,86h104v6h-104z M108,124h104v6h-104z" />
+    <path
+        android:fillColor="#FFE5A50A"
+        android:pathData="M148,52l26,15l-26,15z" />
+    <path
+        android:fillColor="#FFE8E8EA"
+        android:pathData="M116,98h16v26h-16z M138,104h14v20h-14z M158,96h12v28h-12z M176,100h18v24h-18z" />
+</vector>
