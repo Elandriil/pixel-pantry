@@ -1,6 +1,7 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { lanAddresses } from "../../net";
 import type { Config } from "../../config";
+import { LOW_CONFIDENCE } from "../../library/scanner";
 import adminHtmlModule from "../admin/index.html" with { type: "text" };
 import { jsonBody } from "../body";
 import type { Deps } from "../deps";
@@ -143,6 +144,11 @@ export function adminRoutes(deps: Deps): Hono<Env> {
     return c.json({ restartRequired: next.port !== old.port });
   });
 
+  // Low-confidence matches have a tmdb_id but are listed too, so they can be confirmed or corrected.
+  const review = (r: { tmdb_id: number | null; title: string; match_error: string | null }) => {
+    const lowConfidence = r.tmdb_id !== null && (r.match_error ?? "").startsWith(LOW_CONFIDENCE);
+    return { lowConfidence, tmdbId: lowConfidence ? r.tmdb_id : null, matchedTitle: lowConfidence ? r.title : null };
+  };
   r.get("/admin/api/unmatched", (c) =>
     c.json({
       shows: repo.listUnmatchedShows().map((s) => ({
@@ -152,6 +158,7 @@ export function adminRoutes(deps: Deps): Hono<Env> {
         category: s.category,
         error: s.match_error,
         fileCount: s.file_count,
+        ...review(s),
       })),
       movies: repo.listUnmatchedMovies().map((m) => ({
         id: m.id,
@@ -159,6 +166,7 @@ export function adminRoutes(deps: Deps): Hono<Env> {
         year: m.year,
         category: m.category,
         error: m.match_error,
+        ...review(m),
       })),
     }),
   );

@@ -20,20 +20,25 @@ function setup(body: unknown, status = 200, apiKey = "KEY") {
 
 test("searchTv requests the right URL and normalises results", async () => {
   const { urls, client } = setup({
-    results: [{ id: 1, name: "Severance", first_air_date: "2022-02-18", popularity: 50 }],
+    results: [{ id: 1, name: "Severance", original_name: "Severance", first_air_date: "2022-02-18", popularity: 50 }],
   });
   const r = await client.searchTv("Severance", 2022);
   expect(urls).toEqual([
     "https://api.themoviedb.org/3/search/tv?query=Severance&first_air_date_year=2022&api_key=KEY",
   ]);
-  expect(r).toEqual([{ id: 1, title: "Severance", year: 2022, popularity: 50 }]);
+  expect(r).toEqual([{ id: 1, title: "Severance", originalTitle: "Severance", year: 2022, popularity: 50 }]);
 });
 
 test("searchMovie omits year when null and normalises missing fields", async () => {
   const { urls, client } = setup({ results: [{ id: 2, title: "Heat", release_date: "" }] });
   const r = await client.searchMovie("Heat", null);
   expect(urls[0]).toBe("https://api.themoviedb.org/3/search/movie?query=Heat&api_key=KEY");
-  expect(r).toEqual([{ id: 2, title: "Heat", year: null, popularity: 0 }]);
+  expect(r).toEqual([{ id: 2, title: "Heat", originalTitle: null, year: null, popularity: 0 }]);
+});
+
+test("movie search keeps original_title", async () => {
+  const { client } = setup({ results: [{ id: 3, title: "Spirited Away", original_title: "千と千尋の神隠し", release_date: "2001-07-20" }] });
+  expect((await client.searchMovie("Spirited Away"))[0]!.originalTitle).toBe("千と千尋の神隠し");
 });
 
 test("movie search uses year param", async () => {

@@ -202,28 +202,41 @@ function unmatchedRow(entity, type) {
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
   const meta = [entity.year, entity.category, type === "show" ? entity.fileCount + " files" : null]
     .filter((x) => x !== null && x !== undefined).join(" · ");
+  let status = entity.error ? el("div", { className: "error", textContent: entity.error }) : "";
+  if (entity.lowConfidence) {
+    // matched, but only because TMDB ranked it first: confirm it or search for the right one
+    const keep = el("button", { type: "button", textContent: "Keep this match", className: "secondary" });
+    keep.addEventListener("click", () => useMatch(keep, entity, type, entity.tmdbId));
+    status = el("div", { className: "note" }, [
+      "Low-confidence match: " + entity.matchedTitle + " · TMDB " + entity.tmdbId + " ", keep,
+    ]);
+  }
   return el("div", { className: "row" }, [
     el("div", {}, [el("strong", { textContent: entity.parsedTitle }), " ", el("span", { className: "muted", textContent: meta })]),
-    entity.error ? el("div", { className: "error", textContent: entity.error }) : "",
+    status,
     el("div", { className: "search" }, [input, button]),
     results,
   ]);
 }
 
+async function useMatch(btn, entity, type, tmdbId) {
+  btn.disabled = true;
+  try {
+    await api("match", { method: "POST", body: { type, id: entity.id, tmdbId } });
+    refreshStatus();
+    refreshUnmatched();
+  } catch (err) {
+    btn.disabled = false;
+    alert("Match failed: " + err.message);
+  }
+}
+
 function resultRow(r, entity, type) {
   const use = el("button", { type: "button", textContent: "Use this" });
-  use.addEventListener("click", async () => {
-    use.disabled = true;
-    try {
-      await api("match", { method: "POST", body: { type, id: entity.id, tmdbId: r.id } });
-      refreshStatus();
-      refreshUnmatched();
-    } catch (err) {
-      use.disabled = false;
-      alert("Match failed: " + err.message);
-    }
-  });
-  return el("li", {}, [el("span", { textContent: r.title + (r.year ? " (" + r.year + ")" : "") + " · TMDB " + r.id }), use]);
+  use.addEventListener("click", () => useMatch(use, entity, type, r.id));
+  const original = r.originalTitle && r.originalTitle !== r.title ? " / " + r.originalTitle : "";
+  const label = r.title + original + (r.year ? " (" + r.year + ")" : "") + " · TMDB " + r.id;
+  return el("li", {}, [el("span", { textContent: label }), use]);
 }
 
 async function refreshUnmatched() {

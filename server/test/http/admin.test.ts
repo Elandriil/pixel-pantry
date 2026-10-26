@@ -179,10 +179,33 @@ test("unmatched lists shows and movies without a tmdb id, not hidden", async () 
   const app = buildApp(deps);
   const r = await request(app, "/admin/api/unmatched", undefined, LOCAL);
   expect(r.status).toBe(200);
+  const none = { lowConfidence: false, tmdbId: null, matchedTitle: null };
   expect(r.json.shows).toEqual([
-    { id: showId, parsedTitle: "Mystery", year: null, category: "anime", error: "No TMDB match", fileCount: 2 },
+    { id: showId, parsedTitle: "Mystery", year: null, category: "anime", error: "No TMDB match", fileCount: 2, ...none },
   ]);
-  expect(r.json.movies).toEqual([{ id: movieId, parsedTitle: "Odd Film", year: null, category: "movies", error: null }]);
+  expect(r.json.movies).toEqual([
+    { id: movieId, parsedTitle: "Odd Film", year: null, category: "movies", error: null, ...none },
+  ]);
+});
+
+test("unmatched also lists low-confidence matches, flagged", async () => {
+  const deps = makeDeps();
+  const { showId } = seedShow(deps.repo, { title: "Sousou no Frieren", category: "anime", seasons: [[1]] });
+  deps.repo.updateShowMeta(showId, { tmdb_id: 209867, title: "Frieren: Beyond Journey's End" });
+  deps.repo.setShowMatchError(showId, "Low-confidence match: Frieren: Beyond Journey's End", 1);
+  const movieId = seedMovie(deps.repo, "Sen to Chihiro");
+  deps.repo.updateItemMeta(movieId, { tmdb_id: 129, title: "Spirited Away" });
+  deps.repo.setItemMatchError(movieId, "Low-confidence match: Spirited Away", 1);
+  const app = buildApp(deps);
+  const r = await request(app, "/admin/api/unmatched", undefined, LOCAL);
+  expect(r.json.shows).toEqual([
+    {
+      id: showId, parsedTitle: "Sousou no Frieren", year: null, category: "anime",
+      error: "Low-confidence match: Frieren: Beyond Journey's End", fileCount: 1,
+      lowConfidence: true, tmdbId: 209867, matchedTitle: "Frieren: Beyond Journey's End",
+    },
+  ]);
+  expect(r.json.movies).toMatchObject([{ id: movieId, lowConfidence: true, tmdbId: 129, matchedTitle: "Spirited Away" }]);
 });
 
 test("tmdb search validates input and maps TMDB failures to 503", async () => {
@@ -194,7 +217,7 @@ test("tmdb search validates input and maps TMDB failures to 503", async () => {
   expect(down.status).toBe(503);
   expect(typeof down.json.error).toBe("string");
 
-  const results = [{ id: 7, title: "Lost", year: 2004, popularity: 1 }];
+  const results = [{ id: 7, title: "Lost", originalTitle: null, year: 2004, popularity: 1 }];
   const search = spyOn(deps.tmdb, "searchMovie").mockResolvedValue(results);
   const ok = await request(app, "/admin/api/tmdb/search?type=movie&q=Lost&year=2004", undefined, LOCAL);
   expect(ok.status).toBe(200);

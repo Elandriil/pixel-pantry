@@ -48,6 +48,9 @@ const yearOf = (date: string | null | undefined): number | null => {
   const y = date ? Number.parseInt(date.slice(0, 4), 10) : Number.NaN;
   return Number.isNaN(y) ? null : y;
 };
+/** match_error of a low-confidence match: it has a tmdb_id but is listed for review. */
+export const LOW_CONFIDENCE = "Low-confidence match";
+const lowConfidence = (title: string) => `${LOW_CONFIDENCE}: ${title}`;
 const genreJson = (genres: { name: string }[]): string => JSON.stringify(genres.map((g) => g.name));
 
 export class Scanner {
@@ -262,9 +265,12 @@ export class Scanner {
     const { repo, tmdb, log } = this.deps;
     try {
       let tmdbId = this.overrideId(show.parsed_key, "show");
+      let matchNote: string | null = null;
       if (tmdbId === null) {
         const results = await tmdb.searchTv(show.parsed_title, show.year);
-        tmdbId = pickMatch(results, show.parsed_title, show.year)?.id ?? null;
+        const m = pickMatch(results, show.parsed_title, show.year);
+        tmdbId = m?.result.id ?? null;
+        if (m?.confidence === "low") matchNote = lowConfidence(m.result.title);
       }
       if (tmdbId === null) {
         repo.setShowMatchError(show.id, "No TMDB match", this.now());
@@ -289,7 +295,7 @@ export class Scanner {
           episode_count: s.episode_count,
         });
       }
-      repo.setShowMatchError(show.id, null, this.now());
+      repo.setShowMatchError(show.id, matchNote, this.now());
     } catch (err) {
       log.warn("tmdb show match failed", { key: show.parsed_key, error: message(err) });
       repo.setShowMatchError(show.id, message(err), isNotFound(err) ? this.now() : show.match_attempted_at);
@@ -401,9 +407,12 @@ export class Scanner {
     const { repo, tmdb, log } = this.deps;
     try {
       let tmdbId = this.overrideId(key, "movie");
+      let matchNote: string | null = null;
       if (tmdbId === null) {
         const results = await tmdb.searchMovie(item.parsed_title, item.year);
-        tmdbId = pickMatch(results, item.parsed_title, item.year)?.id ?? null;
+        const m = pickMatch(results, item.parsed_title, item.year);
+        tmdbId = m?.result.id ?? null;
+        if (m?.confidence === "low") matchNote = lowConfidence(m.result.title);
       }
       if (tmdbId === null) {
         repo.setItemMatchError(item.id, "No TMDB match", this.now());
@@ -421,7 +430,7 @@ export class Scanner {
         genres: genreJson(d.genres),
         runtime: d.runtime,
       });
-      repo.setItemMatchError(item.id, null, this.now());
+      repo.setItemMatchError(item.id, matchNote, this.now());
     } catch (err) {
       log.warn("tmdb movie match failed", { key, error: message(err) });
       repo.setItemMatchError(item.id, message(err), isNotFound(err) ? this.now() : item.match_attempted_at);

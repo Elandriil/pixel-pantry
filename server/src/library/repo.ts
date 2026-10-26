@@ -155,11 +155,12 @@ export class Repo {
       unmatchedShows: p(
         `SELECT s.*, (SELECT COUNT(*) FROM files f JOIN items i ON i.id = f.item_id
            WHERE i.show_id = s.id AND f.deleted_at IS NULL AND i.deleted_at IS NULL) AS file_count
-         FROM shows s WHERE s.tmdb_id IS NULL AND s.deleted_at IS NULL ORDER BY s.parsed_title COLLATE NOCASE`,
+         FROM shows s WHERE (s.tmdb_id IS NULL OR s.match_error LIKE 'Low-confidence match%') AND s.deleted_at IS NULL
+         ORDER BY s.parsed_title COLLATE NOCASE`,
       ),
       unmatchedMovies: p(
-        `SELECT * FROM items WHERE type = 'movie' AND tmdb_id IS NULL AND deleted_at IS NULL
-         ORDER BY parsed_title COLLATE NOCASE`,
+        `SELECT * FROM items WHERE type = 'movie' AND (tmdb_id IS NULL OR match_error LIKE 'Low-confidence match%')
+         AND deleted_at IS NULL ORDER BY parsed_title COLLATE NOCASE`,
       ),
       episodeList: p(
         "SELECT * FROM items WHERE show_id = ? AND deleted_at IS NULL ORDER BY season_number, episode_number",
@@ -359,12 +360,12 @@ export class Repo {
     })();
   }
 
-  /** Live shows without a TMDB id, each with its live file count. */
+  /** Live shows without a TMDB id or with a low-confidence match, each with its live file count. */
   listUnmatchedShows(): (ShowRow & { file_count: number })[] {
     return this.q.unmatchedShows!.all() as (ShowRow & { file_count: number })[];
   }
 
-  /** Live movies without a TMDB id. */
+  /** Live movies without a TMDB id or with a low-confidence match. */
   listUnmatchedMovies(): ItemRow[] {
     return this.q.unmatchedMovies!.all() as ItemRow[];
   }

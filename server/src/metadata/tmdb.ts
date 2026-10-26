@@ -3,7 +3,14 @@ import { resolve, type FetchFn, type Lazy } from "../types";
 const BASE = "https://api.themoviedb.org";
 const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-export type TmdbSearchResult = { id: number; title: string; year: number | null; popularity: number };
+export type TmdbSearchResult = {
+  id: number;
+  title: string;
+  /** The title in the original language (e.g. romaji or kanji for anime), when TMDB has one. */
+  originalTitle: string | null;
+  year: number | null;
+  popularity: number;
+};
 
 export type TmdbTvDetails = {
   id: number;
@@ -50,6 +57,8 @@ type RawResult = {
   id: number;
   name?: string;
   title?: string;
+  original_name?: string;
+  original_title?: string;
   first_air_date?: string;
   release_date?: string;
   popularity?: number;
@@ -103,6 +112,7 @@ export class TmdbClient {
       return {
         id: r.id,
         title: (kind === "tv" ? r.name : r.title) ?? "",
+        originalTitle: (kind === "tv" ? r.original_name : r.original_title) || null,
         year: Number.isNaN(y) ? null : y,
         popularity: r.popularity ?? 0,
       };

@@ -70,7 +70,7 @@ function season(n: number, episodes: number[], idBase: number): TmdbSeason {
 }
 
 function severance(ctx: ReturnType<typeof setup>) {
-  ctx.tmdb.tvSearchResults = [{ id: 95396, title: "Severance", year: 2022, popularity: 50 }];
+  ctx.tmdb.tvSearchResults = [{ id: 95396, title: "Severance", originalTitle: null, year: 2022, popularity: 50 }];
   ctx.tmdb.tvDetailsById[95396] = tvDetails(95396, "Severance", [[1, 9], [2, 10]]);
   ctx.tmdb.seasonsByIdAndNumber["95396:2"] = season(2, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 1000);
   const a = ctx.file("tv/Severance/Season 02/Severance S02E04.mkv");
@@ -182,7 +182,7 @@ test("vanished file hides item and show; restored file revives them", async () =
 
 test("anime absolute numbering maps through TMDB season counts", async () => {
   const ctx = setup();
-  ctx.tmdb.tvSearchResults = [{ id: 209867, title: "Frieren", year: 2023, popularity: 30 }];
+  ctx.tmdb.tvSearchResults = [{ id: 209867, title: "Frieren", originalTitle: null, year: 2023, popularity: 30 }];
   ctx.tmdb.tvDetailsById[209867] = tvDetails(209867, "Frieren", [[0, 3], [1, 12], [2, 16]]);
   ctx.tmdb.seasonsByIdAndNumber["209867:2"] = season(2, [1, 2, 3], 5000);
   ctx.file("anime/Frieren/Frieren - 13.mkv");
@@ -296,6 +296,30 @@ test("a scan without a TMDB key retries as soon as the key is set", async () => 
   expect(ctx.repo.getEpisode(after.id, 1, 1)!.tmdb_id).toBe(1001);
 });
 
+test("low-confidence match sets tmdb_id and names the match in match_error; a later high match clears it", async () => {
+  const ctx = setup();
+  ctx.tmdb.tvSearchResults = [
+    { id: 209867, title: "Frieren: Beyond Journey's End", originalTitle: "葬送のフリーレン", year: 2023, popularity: 30 },
+  ];
+  ctx.tmdb.tvDetailsById[209867] = tvDetails(209867, "Frieren: Beyond Journey's End", [[1, 28]]);
+  ctx.tmdb.seasonsByIdAndNumber["209867:1"] = season(1, [5], 5000);
+  ctx.tmdb.movieSearchResults = [{ id: 129, title: "Spirited Away", originalTitle: "千と千尋の神隠し", year: 2001, popularity: 9 }];
+  ctx.tmdb.movieDetailsById[129] = {
+    id: 129, title: "Spirited Away", release_date: "2001-07-20", overview: "", poster_path: null, backdrop_path: null,
+    vote_average: 8.5, genres: [], runtime: 125,
+  };
+  ctx.file("anime/Sousou no Frieren/Sousou no Frieren - 05.mkv");
+  ctx.file("movies/Sen to Chihiro no Kamikakushi (2001)/Sen to Chihiro no Kamikakushi (2001).mkv");
+  await ctx.scanner.scan();
+
+  const show = ctx.repo.getShowByKey("anime:sousou no frieren:")!;
+  expect(show.tmdb_id).toBe(209867);
+  expect(show.match_error).toBe("Low-confidence match: Frieren: Beyond Journey's End");
+  const movie = ctx.repo.getMovieByKey("movies:sen to chihiro no kamikakushi:2001")!;
+  expect(movie.tmdb_id).toBe(129);
+  expect(movie.match_error).toBe("Low-confidence match: Spirited Away");
+});
+
 test("unparseable file still becomes an item under folder title", async () => {
   const ctx = setup();
   const rel = ctx.file("tv/Weird Folder/clip.mkv");
@@ -325,7 +349,7 @@ test("multi-episode file sets episode_end", async () => {
 test("movie with override uses override tmdb id", async () => {
   const ctx = setup();
   ctx.repo.setOverride("movies:heat:1995", "movie", 949);
-  ctx.tmdb.movieSearchResults = [{ id: 1, title: "Heat", year: 1995, popularity: 1 }];
+  ctx.tmdb.movieSearchResults = [{ id: 1, title: "Heat", originalTitle: null, year: 1995, popularity: 1 }];
   ctx.tmdb.movieDetailsById[949] = {
     id: 949,
     title: "Heat",
@@ -437,7 +461,7 @@ test("empty media folder setting sets lastError", async () => {
 
 test("episodes TMDB does not list do not refetch their season on rescan", async () => {
   const ctx = setup();
-  ctx.tmdb.tvSearchResults = [{ id: 95396, title: "Severance", year: 2022, popularity: 50 }];
+  ctx.tmdb.tvSearchResults = [{ id: 95396, title: "Severance", originalTitle: null, year: 2022, popularity: 50 }];
   ctx.tmdb.tvDetailsById[95396] = tvDetails(95396, "Severance", [[1, 9], [2, 10]]);
   ctx.tmdb.seasonsByIdAndNumber["95396:2"] = season(2, [1, 2, 3, 4], 1000); // E05 not listed
   ctx.file("tv/Severance/Season 02/Severance S02E04.mkv");
@@ -469,7 +493,7 @@ test("anime item keeps its id when the show matches later", async () => {
   const show = ctx.repo.getShowByKey("anime:frieren:")!;
   const before = ctx.repo.getEpisode(show.id, 1, 13)!;
 
-  ctx.tmdb.tvSearchResults = [{ id: 209867, title: "Frieren", year: 2023, popularity: 30 }];
+  ctx.tmdb.tvSearchResults = [{ id: 209867, title: "Frieren", originalTitle: null, year: 2023, popularity: 30 }];
   ctx.tmdb.tvDetailsById[209867] = tvDetails(209867, "Frieren", [[1, 12], [2, 16]]);
   ctx.tmdb.seasonsByIdAndNumber["209867:2"] = season(2, [1, 2], 5000);
   ctx.clock.t += DAY;
