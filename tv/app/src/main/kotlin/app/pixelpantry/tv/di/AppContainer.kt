@@ -4,7 +4,9 @@ import android.app.Application
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
+import app.pixelpantry.tv.R
 import app.pixelpantry.tv.api.ApiClient
+import app.pixelpantry.tv.library.LibraryScanner
 import app.pixelpantry.tv.server.NsdDiscovery
 import app.pixelpantry.tv.server.ServerResolver
 import app.pixelpantry.tv.server.ServerStore
@@ -30,6 +32,16 @@ class AppContainer(private val app: Application) {
     val resolver: ServerResolver by lazy { ServerResolver(serverStore, discovery, ServerResolver.apiProbe(api)) }
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val toaster = Toaster(scope)
+    val libraryScanner: LibraryScanner by lazy {
+        LibraryScanner(
+            api, toaster, scope,
+            LibraryScanner.Strings(
+                scanning = app.getString(R.string.scan_started),
+                updated = app.getString(R.string.scan_done),
+                scanFailed = { app.getString(R.string.scan_failed, it) },
+            ),
+        )
+    }
     val settingsRepo: SettingsRepo by lazy { SettingsRepo(api, serverStore, scope) }
     val imageLoader: ImageLoader by lazy {
         ImageLoader.Builder(app)

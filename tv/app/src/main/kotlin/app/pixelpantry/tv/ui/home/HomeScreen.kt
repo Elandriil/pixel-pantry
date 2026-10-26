@@ -29,6 +29,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -54,6 +56,8 @@ fun HomeScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(vm) { vm.navEvents.collect(onNavigate) }
+    // Refresh when the page is shown again (back from the player or a detail page) so progress is current.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.onResume() }
 
     when (val s = state) {
         UiState.Loading -> LoadingScreen(stringResource(R.string.loading))

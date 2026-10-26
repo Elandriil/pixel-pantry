@@ -5,11 +5,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -78,28 +78,28 @@ private fun NavController.openSidebarEntry(entry: SidebarEntry) {
 @Composable
 fun NavGraph(container: AppContainer) {
     val nav = rememberNavController()
-    val context = LocalContext.current.applicationContext
-    val homeStrings = remember(context) {
-        HomeViewModel.Strings(
-            scanning = context.getString(R.string.home_scanning),
-            updated = context.getString(R.string.home_scan_done),
-            scanFailed = { context.getString(R.string.home_scan_failed, it) },
-        )
-    }
-    fun homeFactory(category: String) = HomeViewModel.Factory(container.api, category, container.toaster, homeStrings)
+    fun homeFactory(category: String) = HomeViewModel.Factory(container.api, category, container.libraryScanner)
 
-    /** Off the browse pages, Rescan runs on the root Home page's view model (always at the bottom of the stack). */
-    fun rescanFromRootHome() {
-        val root = runCatching { nav.getBackStackEntry(Routes.HOME) }.getOrNull() ?: return
-        ViewModelProvider(root, homeFactory("home"))["home", HomeViewModel::class.java].rescan()
+    /**
+     * Opens a card's destination. Only while [entry] is resumed (a second OK during the exit transition is
+     * dropped), and single-top so a repeated event cannot stack the same page twice.
+     */
+    fun open(entry: NavBackStackEntry, event: HomeViewModel.NavEvent) {
+        if (!entry.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        val route = when (event) {
+            is HomeViewModel.NavEvent.Player -> Routes.player(event.itemId)
+            is HomeViewModel.NavEvent.Movie -> Routes.movie(event.itemId)
+            is HomeViewModel.NavEvent.Show -> Routes.show(event.showId)
+        }
+        nav.navigate(route) { launchSingleTop = true }
     }
 
     @Composable
-    fun Shell(selected: SidebarEntry, onRescan: () -> Unit = ::rescanFromRootHome, content: @Composable () -> Unit) =
+    fun Shell(selected: SidebarEntry, content: @Composable () -> Unit) =
         AppShell(
             selected = selected,
             onSelect = { nav.openSidebarEntry(it) },
-            onRescan = onRescan,
+            onRescan = container.libraryScanner::rescan,
             content = content,
         )
 
@@ -117,16 +117,8 @@ fun NavGraph(container: AppContainer) {
                 composable(Routes.HOME, arguments = listOf(navArgument("category") { type = NavType.StringType })) { backStack ->
                     val category = backStack.arguments?.getString("category").orEmpty()
                     val vm: HomeViewModel = viewModel(key = category, factory = homeFactory(category))
-                    Shell(sidebarEntryFor(category), onRescan = vm::rescan) {
-                        HomeScreen(vm, onNavigate = { event ->
-                            nav.navigate(
-                                when (event) {
-                                    is HomeViewModel.NavEvent.Player -> Routes.player(event.itemId)
-                                    is HomeViewModel.NavEvent.Movie -> Routes.movie(event.itemId)
-                                    is HomeViewModel.NavEvent.Show -> Routes.show(event.showId)
-                                },
-                            )
-                        })
+                    Shell(sidebarEntryFor(category)) {
+                        HomeScreen(vm, onNavigate = { event -> open(backStack, event) })
                     }
                 }
                 composable(Routes.SEARCH) {
@@ -140,10 +132,10 @@ fun NavGraph(container: AppContainer) {
                 }
                 // Detail and player stand-ins until Tasks 7–8, so opening a card has somewhere to go.
                 composable(Routes.SHOW, arguments = listOf(navArgument("id") { type = NavType.IntType })) {
-                    PlaceholderScreen("Show ${it.arguments?.getInt("id")}")
+                    PlaceholderScreen(stringResource(R.string.placeholder_show, it.arguments?.getInt("id") ?: 0))
                 }
                 composable(Routes.MOVIE, arguments = listOf(navArgument("id") { type = NavType.IntType })) {
-                    PlaceholderScreen("Movie ${it.arguments?.getInt("id")}")
+                    PlaceholderScreen(stringResource(R.string.placeholder_movie, it.arguments?.getInt("id") ?: 0))
                 }
                 composable(
                     Routes.PLAYER,
@@ -152,7 +144,7 @@ fun NavGraph(container: AppContainer) {
                         navArgument("fromStart") { type = NavType.BoolType; defaultValue = false },
                     ),
                 ) {
-                    PlaceholderScreen("Player ${it.arguments?.getInt("itemId")}")
+                    PlaceholderScreen(stringResource(R.string.placeholder_player, it.arguments?.getInt("itemId") ?: 0))
                 }
             }
             ToastHost(container.toaster)

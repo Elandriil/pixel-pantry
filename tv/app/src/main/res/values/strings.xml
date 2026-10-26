@@ -31,9 +31,6 @@
     <string name="home_rescan">Rescan</string>
     <string name="home_error_title">Could not load</string>
     <string name="home_retry">Retry</string>
-    <string name="home_scanning">Scanning…</string>
-    <string name="home_scan_done">Library updated</string>
-    <string name="home_scan_failed">Scan failed: %1$s</string>
     <string name="hero_next">Next: %1$s</string>
     <plurals name="hero_episodes">
         <item quantity="one">%1$d episode</item>
@@ -41,6 +38,16 @@
     </plurals>
     <string name="hero_unwatched">%1$d unwatched</string>
     <string name="card_next">Next</string>
+
+    <!-- Library scan -->
+    <string name="scan_started">Scanning…</string>
+    <string name="scan_done">Library updated</string>
+    <string name="scan_failed">Scan failed: %1$s</string>
+
+    <!-- Stand-ins until the detail pages and the player exist -->
+    <string name="placeholder_show">Show %1$d</string>
+    <string name="placeholder_movie">Movie %1$d</string>
+    <string name="placeholder_player">Player %1$d</string>
 
     <!-- Generic -->
     <string name="loading">Loading…</string>

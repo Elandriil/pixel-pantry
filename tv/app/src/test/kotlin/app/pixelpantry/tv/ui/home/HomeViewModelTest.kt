@@ -1,12 +1,15 @@
 package app.pixelpantry.tv.ui.home
 
 import app.pixelpantry.tv.api.ApiClient
+import app.pixelpantry.tv.library.LibraryScanner
 import app.pixelpantry.tv.ui.components.Toaster
 import app.pixelpantry.tv.ui.home.HomeViewModel.NavEvent
 import app.pixelpantry.tv.ui.home.HomeViewModel.UiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -43,7 +46,7 @@ class HomeViewModelTest {
     private var lastError: String? = null
     private var homeBody: () -> MockResponse = { json(homeFixture) }
 
-    private val strings = HomeViewModel.Strings(
+    private val strings = LibraryScanner.Strings(
         scanning = "Scanning…",
         updated = "Library updated",
         scanFailed = { "Scan failed: $it" },
@@ -81,8 +84,16 @@ class HomeViewModelTest {
     private fun status(state: String) =
         """{"state":"$state","startedAt":1,"finishedAt":null,"filesSeen":3,"filesProcessed":1,"phase":"probe","lastError":${lastError?.let { "\"$it\"" } ?: "null"}}"""
 
-    private fun TestScope.newVm(category: String = "home", toaster: Toaster = Toaster(backgroundScope)) =
-        HomeViewModel(api, category, toaster, strings, pollIntervalMs = 2_000)
+    private fun TestScope.scanner() =
+        LibraryScanner(api, Toaster(backgroundScope), backgroundScope, strings, pollIntervalMs = 2_000)
+
+    private fun TestScope.newVm(category: String = "home", scanner: LibraryScanner = scanner()) =
+        HomeViewModel(api, category, scanner)
+
+    /** Waits in real time (HTTP runs on real threads) until [condition] holds, failing after 5 s. */
+    private suspend fun awaitRealTime(condition: () -> Boolean) = withContext(Dispatchers.Default) {
+        withTimeout(5_000) { while (!condition()) delay(10) }
+    }
 
     private suspend fun HomeViewModel.loaded(): UiState.Loaded = state.first { it !is UiState.Loading } as UiState.Loaded
 
@@ -134,65 +145,42 @@ class HomeViewModelTest {
         assertEquals(listOf(NavEvent.Player(7), NavEvent.Show(1), NavEvent.Movie(20)), events)
     }
 
-    @Test fun rescanPostsPollsUntilIdleReloadsAndToastsInOrder() = runTest {
-        val toaster = Toaster(backgroundScope)
-        val toasts = mutableListOf<String>()
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { toaster.current.filterNotNull().toList(toasts) }
-        val vm = newVm(toaster = toaster)
-        vm.loaded()
-        requests.clear()
+    @Test fun reloadsInPlaceWhenAScanFinishes() = runTest {
+        val scanner = scanner()
+        val vm = newVm(scanner = scanner)
+        val focused = vm.loaded().rows[1].cards[0]
+        vm.onFocus(focused)
 
-        vm.rescan()
-        toaster.current.first { it == "Library updated" }
-
-        assertEquals(listOf("Scanning…", "Library updated"), toasts)
-        assertEquals(2, statusPolls.get())
-        assertEquals(
-            listOf("POST /api/scan", "GET /api/scan/status", "GET /api/scan/status", "GET /api/home"),
-            requests.toList(),
-        )
-        assertEquals(2, homeLoads.get())
-        assertTrue(vm.state.value is UiState.Loaded)
-    }
-
-    @Test fun rescanWaitsThePollIntervalBetweenPolls() = runTest {
-        scanStates = listOf("scanning", "scanning", "idle")
-        val toaster = Toaster(backgroundScope)
-        val vm = newVm(toaster = toaster)
-        vm.loaded()
-        val start = testScheduler.currentTime
-
-        vm.rescan()
-        toaster.current.first { it == "Library updated" }
-
-        assertEquals(3, statusPolls.get())
-        // Three polls, each after a full interval (virtual time may run further while real HTTP is in flight).
-        val elapsed = testScheduler.currentTime - start
-        assertTrue("elapsed $elapsed ms", elapsed >= 6_000)
-    }
-
-    @Test fun rescanReportsLastError() = runTest {
-        lastError = "Media folder is missing"
-        val toaster = Toaster(backgroundScope)
-        val vm = newVm(toaster = toaster)
-        vm.loaded()
-
-        vm.rescan()
-        assertEquals("Scan failed: Media folder is missing", toaster.current.first { it?.startsWith("Scan failed") == true })
-    }
-
-    @Test fun rescanWhileScanningDoesNotStartASecondPoll() = runTest {
-        scanStates = listOf("scanning", "idle")
-        val toaster = Toaster(backgroundScope)
-        val vm = newVm(toaster = toaster)
-        vm.loaded()
-
-        vm.rescan()
-        vm.rescan()
-        toaster.current.first { it == "Library updated" }
+        scanner.rescan()
+        awaitRealTime { homeLoads.get() == 2 }
 
         assertEquals(1, requests.count { it == "POST /api/scan" })
-        assertEquals(2, statusPolls.get())
+        val reloaded = vm.state.value as UiState.Loaded
+        assertEquals(focused, reloaded.focused) // refreshed in place, focus kept
+    }
+
+    @Test fun rescanDelegatesToTheSharedScanner() = runTest {
+        val scanner = scanner()
+        val home = newVm(scanner = scanner)
+        val tv = newVm(category = "tv", scanner = scanner)
+        home.loaded(); tv.loaded()
+
+        home.rescan()
+        tv.rescan()
+        awaitRealTime { homeLoads.get() == 2 && requests.count { it == "GET /api/categories/tv" } == 2 }
+
+        assertEquals(1, requests.count { it == "POST /api/scan" })
+    }
+
+    @Test fun reloadsOnResumeButNotOnTheFirstResume() = runTest {
+        val vm = newVm()
+        vm.loaded()
+        vm.onResume()
+        assertEquals(1, homeLoads.get())
+
+        vm.onResume()
+        awaitRealTime { homeLoads.get() == 2 }
+        assertTrue(vm.state.value is UiState.Loaded)
     }
 
     private companion object {
