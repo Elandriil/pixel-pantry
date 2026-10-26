@@ -66,7 +66,7 @@ function fallbackEpisode(stem: string): EpisodeMatch | null {
   if ((m = /\b(\d{1,2})x(\d{1,3})\b/i.exec(s)))
     return { season: Number(m[1]), episodes: [Number(m[2])], index: m.index };
   if ((m = /\bepisode\s*(\d{1,3})\b/i.exec(s))) return { season: null, episodes: [Number(m[1])], index: m.index };
-  if ((m = /\s-\s(\d{1,3})(?:\s|$)/.exec(s))) return { season: null, episodes: [Number(m[1])], index: m.index };
+  if ((m = /\s-\s(\d{1,3})(?:v\d+)?(?:\s|$)/.exec(s))) return { season: null, episodes: [Number(m[1])], index: m.index };
   if ((m = /\bE(\d{1,3})\b/i.exec(s))) return { season: null, episodes: [Number(m[1])], index: m.index };
   if ((m = /^(\d{1,3})\b/.exec(s))) return { season: null, episodes: [Number(m[1])], index: 0 };
   return null;
@@ -83,7 +83,7 @@ export function parseVideoPath(relPath: string): ParsedVideo | null {
 
   let lib: ReturnType<typeof filenameParse> | null = null;
   try {
-    lib = filenameParse(base, kind === "episode");
+    lib = filenameParse(stem, kind === "episode");
   } catch {
     lib = null;
   }

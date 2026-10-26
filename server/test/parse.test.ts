@@ -12,6 +12,9 @@ const rows: [string, string, number | null, number | null, number[], boolean][] 
   ["anime/Frieren/Frieren S01E05.mkv", "Frieren", null, 1, [5], false],
   ["movies/Dune Part Two (2024)/Dune.Part.Two.2024.2160p.mkv", "Dune Part Two", 2024, null, [], false],
   ["movies/Dune.Part.Two.2024.1080p.BluRay.x264.mkv", "Dune Part Two", 2024, null, [], false],
+  ["movies/Heat/Heat.mkv", "Heat", null, null, [], false],
+  ["movies/Dune.Part.Two.mkv", "Dune Part Two", null, null, [], false],
+  ["anime/Frieren/Frieren - 28v2.mkv", "Frieren", null, null, [28], true],
   ["tv/Weird Folder/clip.mkv", "Weird Folder", null, null, [], false],
 ];
 
