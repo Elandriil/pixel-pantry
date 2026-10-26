@@ -136,6 +136,14 @@ test("continueWatching returns next for S1E2 after S1E1 is watched", () => {
   expect(continueWatching(db, "anime")).toEqual([]);
 });
 
+test("a short start of the next episode keeps the show in Continue Watching as next", () => {
+  const { db, repo } = setup();
+  const { itemIds } = seedShow(repo, { title: "Severance", category: "tv", seasons: [[1, 2, 3]] });
+  reportProgress(db, { itemId: itemIds[0]![0]!, position: 1200, duration: 1200, now: T0 });
+  reportProgress(db, { itemId: itemIds[0]![1]!, position: 5, duration: 1200, now: T0 + MIN });
+  expect(continueWatching(db, null)).toEqual([{ itemId: itemIds[0]![1]!, reason: "next", lastPlayedAt: T0 + MIN }]);
+});
+
 test("continueWatching returns nothing after the last episode is watched", () => {
   const { db, repo } = setup();
   const { itemIds } = seedShow(repo, { title: "Severance", category: "tv", seasons: [[1, 2], [1]] });

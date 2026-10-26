@@ -166,17 +166,20 @@ export function continueWatching(db: Database, category: Category | null, limit 
   // Each live show's most recently played live episode (ties: latest in episode order).
   const latest = db
     .query(
-      `SELECT showId, watched, lastPlayedAt, sp, season, episode FROM (
-         SELECT i.show_id AS showId, p.watched, p.last_played_at AS lastPlayedAt, ${SPECIALS_LAST} AS sp,
-                i.season_number AS season, i.episode_number AS episode,
+      `SELECT itemId, showId, watched, position, lastPlayedAt, sp, season, episode FROM (
+         SELECT i.id AS itemId, i.show_id AS showId, p.watched, p.position, p.last_played_at AS lastPlayedAt,
+                ${SPECIALS_LAST} AS sp, i.season_number AS season, i.episode_number AS episode,
                 ROW_NUMBER() OVER (PARTITION BY i.show_id
                   ORDER BY p.last_played_at DESC, ${SPECIALS_LAST} DESC, i.season_number DESC, i.episode_number DESC) AS rn
          FROM playback p JOIN items i ON i.id = p.item_id JOIN shows s ON s.id = i.show_id
          WHERE ${LIVE_ITEM} AND i.type = 'episode' AND p.last_played_at IS NOT NULL
            AND (?1 IS NULL OR i.category = ?1)
-       ) WHERE rn = 1 AND watched = 1`,
+       ) WHERE rn = 1`,
     )
-    .all(category) as { showId: number; lastPlayedAt: number; sp: number; season: number; episode: number }[];
+    .all(category) as {
+    itemId: number; showId: number; watched: number; position: number; lastPlayedAt: number;
+    sp: number; season: number; episode: number;
+  }[];
 
   const nextQuery = db.query(
     `SELECT i.id FROM items i LEFT JOIN playback p ON p.item_id = i.id
@@ -187,6 +190,11 @@ export function continueWatching(db: Database, category: Category | null, limit 
   );
   for (const l of latest) {
     if (showsWithEntry.has(l.showId)) continue; // resume beats next
+    if (l.watched === 0) {
+      // only just started (below the resume threshold): it is still the episode to watch next
+      if (l.position < RESUME_MIN_POSITION) entries.push({ itemId: l.itemId, reason: "next", lastPlayedAt: l.lastPlayedAt });
+      continue;
+    }
     const next = nextQuery.get(l.showId, l.sp, l.season, l.episode) as { id: number } | null;
     if (next) entries.push({ itemId: next.id, reason: "next", lastPlayedAt: l.lastPlayedAt });
   }
