@@ -80,7 +80,7 @@ fun ConnectScreen(vm: ConnectViewModel, onConnected: () -> Unit) {
                 is UiState.Failed -> NotFound(
                     state = s,
                     onDraftChange = vm::onDraftChange,
-                    onConnect = { vm.submitManual(s.manualDraft) },
+                    onConnect = vm::submitManual,
                     onRetry = vm::retry,
                 )
             }
@@ -113,6 +113,8 @@ private fun NotFound(
     onRetry: () -> Unit,
 ) {
     val fieldFocus = remember { FocusRequester() }
+    // Local field state keeps typing responsive; every change is pushed to the ViewModel, which submits its own copy.
+    var text by remember { mutableStateOf(state.manualDraft) }
     val secondary = MaterialTheme.colorScheme.onSurfaceVariant
 
     Text(
@@ -131,8 +133,11 @@ private fun NotFound(
         }
     }
     AddressField(
-        value = state.manualDraft,
-        onValueChange = onDraftChange,
+        value = text,
+        onValueChange = {
+            text = it
+            onDraftChange(it)
+        },
         onSubmit = onConnect,
         modifier = Modifier.focusRequester(fieldFocus),
     )

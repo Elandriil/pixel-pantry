@@ -1,6 +1,8 @@
 package app.pixelpantry.tv.ui.connect
 
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import app.pixelpantry.tv.api.ApiClient
 import app.pixelpantry.tv.server.ServerLocator
 import app.pixelpantry.tv.server.ServerResolver
@@ -12,7 +14,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -26,6 +30,7 @@ import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -77,7 +82,8 @@ class ConnectViewModelTest {
     @Test fun manualAddressIsProbedStoredAndReady() = runTest {
         val vm = ConnectViewModel(FakeLocator(notFound), api, store)
         replyInfo()
-        vm.submitManual(serverAddress)
+        vm.onDraftChange(serverAddress)
+        vm.submitManual()
         val ready = vm.state.first { it !is UiState.Resolving }
         assertEquals(UiState.Ready("http://$serverAddress"), ready)
         assertEquals("http://$serverAddress", api.baseUrl)
@@ -88,7 +94,8 @@ class ConnectViewModelTest {
     @Test fun invalidAddressStaysFailedWithErrorAndProbesNothing() = runTest {
         val vm = ConnectViewModel(FakeLocator(notFound), api, store)
         for (bad in listOf("", "192.168.1.20", "http://192.168.1.20:8765", ":8765", "host:0", "host:70000", "host:abc")) {
-            vm.submitManual(bad)
+            vm.onDraftChange(bad)
+            vm.submitManual()
             assertEquals(
                 UiState.Failed(tried = notFound.tried, manualDraft = bad, error = ConnectError.InvalidAddress),
                 vm.state.value,
@@ -102,7 +109,8 @@ class ConnectViewModelTest {
     @Test fun unreachableManualAddressFailsWithAddressAndKeepsBaseUrl() = runTest {
         val vm = ConnectViewModel(FakeLocator(notFound), api, store)
         replyInfo(name = "Some Other Device")
-        vm.submitManual(serverAddress)
+        vm.onDraftChange(serverAddress)
+        vm.submitManual()
         val failed = vm.state.first { it !is UiState.Resolving }
         assertEquals(
             UiState.Failed(tried = notFound.tried, manualDraft = serverAddress, error = ConnectError.Unreachable(serverAddress)),
@@ -110,6 +118,30 @@ class ConnectViewModelTest {
         )
         assertEquals("", api.baseUrl)
         assertNull(store.manualAddress.first())
+    }
+
+    @Test fun storageFailureStillConnects() = runTest {
+        val broken = object : DataStore<Preferences> {
+            override val data: Flow<Preferences> = flow { throw IOException("disk unreadable") }
+            override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
+                throw IOException("disk unreadable")
+        }
+        val vm = ConnectViewModel(FakeLocator(notFound), api, ServerStore(broken))
+        replyInfo()
+        vm.onDraftChange(serverAddress)
+        vm.submitManual()
+        assertEquals(UiState.Ready("http://$serverAddress"), vm.state.first { it !is UiState.Resolving })
+        assertEquals("http://$serverAddress", api.baseUrl)
+    }
+
+    @Test fun submitUsesLatestDraftAndRetryKeepsIt() = runTest {
+        val vm = ConnectViewModel(FakeLocator(notFound, notFound), api, store)
+        vm.onDraftChange("10.0.0.")
+        vm.onDraftChange("bad")
+        vm.submitManual()
+        assertEquals(UiState.Failed(notFound.tried, manualDraft = "bad", error = ConnectError.InvalidAddress), vm.state.value)
+        vm.retry()
+        assertEquals(UiState.Failed(notFound.tried, manualDraft = "bad"), vm.state.value)
     }
 
     @Test fun retryResolvesAgain() = runTest {

@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -115,6 +116,17 @@ private fun SidebarItem(
             focusedContentColor = MaterialTheme.colorScheme.surface,
         ),
     ) {
+        // The accent bar keeps the selected entry recognisable while it has focus (light background).
+        if (isSelected) {
+            Box(
+                Modifier
+                    .padding(start = 2.dp)
+                    .align(Alignment.CenterStart)
+                    .width(3.dp)
+                    .height(22.dp)
+                    .background(accent, RoundedCornerShape(2.dp)),
+            )
+        }
         Row(
             modifier = Modifier.fillMaxHeight().padding(start = 10.dp),
             verticalAlignment = Alignment.CenterVertically,

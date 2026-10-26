@@ -10,7 +10,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.tv.material3.MaterialTheme
@@ -41,6 +43,10 @@ fun AppShell(
                 .padding(start = SidebarCollapsedWidth)
                 .focusRequester(contentFocus)
                 .focusRestorer()
+                // Only LEFT may leave the content (into the sidebar); UP/DOWN/RIGHT at the edges stay put.
+                .focusProperties {
+                    exit = { direction -> if (direction == FocusDirection.Left) FocusRequester.Default else FocusRequester.Cancel }
+                }
                 .focusGroup(),
         ) {
             content()

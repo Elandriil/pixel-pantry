@@ -44,6 +44,7 @@ class ConnectViewModel(
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private var lastTried: List<String> = emptyList()
+    private var draft: String = ""
     private var job: Job? = null
 
     init {
@@ -58,17 +59,20 @@ class ConnectViewModel(
                 is ServerResolver.Result.Found -> ready(r.baseUrl)
                 is ServerResolver.Result.NotFound -> {
                     lastTried = r.tried
-                    UiState.Failed(tried = r.tried, manualDraft = "")
+                    UiState.Failed(tried = r.tried, manualDraft = draft)
                 }
             }
         }
     }
 
     fun onDraftChange(text: String) {
+        draft = text
         _state.update { if (it is UiState.Failed) it.copy(manualDraft = text, error = null) else it }
     }
 
-    fun submitManual(address: String) {
+    /** Validates, probes and (on success) stores the current draft address. */
+    fun submitManual() {
+        val address = draft
         val trimmed = address.trim()
         if (!isValidAddress(trimmed)) {
             _state.value = UiState.Failed(lastTried, manualDraft = address, error = ConnectError.InvalidAddress)
@@ -79,7 +83,8 @@ class ConnectViewModel(
         _state.value = UiState.Resolving(triedSoFar = listOf(url))
         job = viewModelScope.launch {
             _state.value = if (probe(url)) {
-                store.setManualAddress(trimmed)
+                // Storing is best-effort: a storage error must not undo a working connection.
+                runCatching { store.setManualAddress(trimmed) }
                 ready(url)
             } else {
                 UiState.Failed(lastTried, manualDraft = address, error = ConnectError.Unreachable(trimmed))
