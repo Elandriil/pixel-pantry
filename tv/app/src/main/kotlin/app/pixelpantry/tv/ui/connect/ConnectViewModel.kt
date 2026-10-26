@@ -1,5 +1,6 @@
 package app.pixelpantry.tv.ui.connect
 
+import app.pixelpantry.tv.server.resolveOrNotFound
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -106,7 +107,7 @@ class ConnectViewModel(
 
     private suspend fun resolveNow() {
         coroutineScope {
-            val r = locator.resolve()
+            val r = locator.resolveOrNotFound()
             ensureActive() // a retry or manual submit superseded this search; do not switch servers
             _state.value = when (r) {
                 is ServerResolver.Result.Found -> ready(r.baseUrl)

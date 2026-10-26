@@ -102,6 +102,11 @@ class ConnectViewModelTest {
         assertEquals("", api.baseUrl)
     }
 
+    @Test fun aResolverFailureIsNotFoundWithNothingTried() = runTest {
+        val vm = connect(ServerLocator { throw IOException("DataStore read failed") })
+        assertEquals(UiState.Failed(tried = emptyList(), manualDraft = ""), vm.state.value)
+    }
+
     @Test fun manualAddressIsProbedStoredAndReady() = runTest {
         val vm = connect(FakeLocator(notFound))
         replyInfo()

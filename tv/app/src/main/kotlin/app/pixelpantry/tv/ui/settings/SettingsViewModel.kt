@@ -1,5 +1,6 @@
 package app.pixelpantry.tv.ui.settings
 
+import app.pixelpantry.tv.server.resolveOrNotFound
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -176,7 +177,7 @@ class SettingsViewModel(
         _editingAddress.value = false
         runAddressJob {
             try { store.setManualAddress(null) } catch (e: IOException) { }
-            val r = resolver.resolve()
+            val r = resolver.resolveOrNotFound()
             ensureActive()
             when (r) {
                 is ServerResolver.Result.Found -> switchTo(r.baseUrl)

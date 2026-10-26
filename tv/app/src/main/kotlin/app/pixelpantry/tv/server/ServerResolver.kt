@@ -11,6 +11,18 @@ fun interface ServerLocator {
     suspend fun resolve(): ServerResolver.Result
 }
 
+/**
+ * [ServerLocator.resolve] that never throws but for cancellation: a failure (e.g. the address store cannot be
+ * read, an `IOException` from DataStore) counts as nothing found, with nothing tried.
+ */
+suspend fun ServerLocator.resolveOrNotFound(): ServerResolver.Result = try {
+    resolve()
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    ServerResolver.Result.NotFound(tried = emptyList())
+}
+
 class ServerResolver(
     private val store: ServerStore,
     private val discovery: Discovery,

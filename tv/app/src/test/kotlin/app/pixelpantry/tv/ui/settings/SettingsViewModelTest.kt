@@ -253,6 +253,17 @@ class SettingsViewModelTest {
         assertEquals("Connected to $serverAddress", toaster.current.value)
     }
 
+    @Test fun automaticDiscoveryWhoseResolverFailsKeepsTheCurrentAddress() = runTest {
+        store.setManualAddress(serverAddress)
+        val vm = vm(ServerLocator { throw java.io.IOException("DataStore read failed") })
+        awaitRealTime { vm.manualAddress.value == serverAddress }
+        vm.useAutomaticDiscovery()
+        awaitRealTime { toaster.current.value != null }
+        assertEquals("No server found", toaster.current.value)
+        assertEquals("the manual address is put back", serverAddress, store.manualAddress.first())
+        assertEquals(serverUrl, api.baseUrl)
+    }
+
     @Test fun automaticDiscoveryFindingNothingKeepsTheCurrentAddress() = runTest {
         store.setManualAddress(serverAddress)
         val locator = FakeLocator(ServerResolver.Result.NotFound(listOf("http://10.0.0.20:8765")))
