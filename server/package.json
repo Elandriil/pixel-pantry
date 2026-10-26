@@ -1,0 +1,24 @@
+{
+  "name": "pixel-pantry-server",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "ffmpeg-static": "5",
+    "ffprobe-static": "3"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@ctrl/video-filename-parser": "5",
+    "bonjour-service": "1",
+    "chokidar": "6",
+    "hono": "4"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "test": "bun test",
+    "package:win": "bash scripts/package-win.sh"
+  }
+}
