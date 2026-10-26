@@ -69,4 +69,22 @@ class SettingsRepoTest {
         }
         assertEquals(Settings(10, 10, true), repo.settings.value)
     }
+
+    @Test fun cachedSettingsAreFirstNonDefaultValue() = runTest {
+        val cached = Settings(7, 8, false)
+        store.setCachedSettings(cached)
+        val r = SettingsRepo(repoApi(), store, scope)
+        assertEquals(cached, r.settings.first { it != Settings(10, 10, true) })
+    }
+
+    @Test fun refreshIsNotOverwrittenByCache() = runTest {
+        store.setCachedSettings(Settings(7, 8, false))
+        val r = SettingsRepo(repoApi(), store, scope)
+        reply("""{"skipBackSeconds":5,"skipForwardSeconds":45,"autoplayNext":true}""")
+        r.refresh()
+        assertEquals(Settings(5, 45, true), r.settings.value)
+        assertEquals(Settings(5, 45, true), store.cachedSettings.first())
+    }
+
+    private fun repoApi() = ApiClient(OkHttpClient(), ApiClient.defaultJson).also { it.baseUrl = server.url("/").toString().trimEnd('/') }
 }

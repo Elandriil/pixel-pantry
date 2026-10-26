@@ -5,7 +5,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -70,5 +72,21 @@ class ServerResolverTest {
             ServerResolver.Result.NotFound(listOf("http://10.0.0.9:8765", "http://10.0.0.20:8765", "http://10.0.0.21:8765")),
             r,
         )
+    }
+
+    @Test fun neverCompletingDiscoveryTimesOutToNotFound() = runTest {
+        store.setLastKnownAddress("10.0.0.9:8765")
+        val d = object : Discovery {
+            override fun candidates(timeoutMs: Long): Flow<Candidate> = flow { awaitCancellation() }
+        }
+        val r = resolver(d, emptySet()).resolve()
+        assertEquals(ServerResolver.Result.NotFound(listOf("http://10.0.0.9:8765")), r)
+    }
+
+    @Test fun duplicateAndLastKnownCandidatesAreProbedOnce() = runTest {
+        store.setLastKnownAddress("10.0.0.9:8765")
+        val d = FakeDiscovery(listOf(Candidate("10.0.0.9", 8765), Candidate("10.0.0.20", 8765), Candidate("10.0.0.20", 8765)))
+        val r = resolver(d, emptySet()).resolve()
+        assertEquals(ServerResolver.Result.NotFound(listOf("http://10.0.0.9:8765", "http://10.0.0.20:8765")), r)
     }
 }

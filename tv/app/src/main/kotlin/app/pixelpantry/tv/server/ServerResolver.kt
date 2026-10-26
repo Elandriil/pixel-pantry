@@ -1,6 +1,7 @@
 package app.pixelpantry.tv.server
 
 import app.pixelpantry.tv.api.ApiClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withTimeoutOrNull
@@ -39,9 +40,13 @@ class ServerResolver(
         }
 
         var found: Result.Found? = null
+        val seen = mutableSetOf<String>()
+        store.lastKnownAddress.first()?.let { seen += it }
         withTimeoutOrNull(MDNS_TIMEOUT_MS) {
             discovery.candidates(MDNS_TIMEOUT_MS).firstOrNull { c ->
-                found = attempt("${c.host}:${c.port}", Source.MDNS)
+                val address = "${c.host}:${c.port}"
+                if (!seen.add(address)) return@firstOrNull false
+                found = attempt(address, Source.MDNS)
                 found != null
             }
         }
@@ -57,6 +62,8 @@ class ServerResolver(
             api.baseUrl = url
             try {
                 api.info().name == "Pixel Pantry"
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 false
             } finally {

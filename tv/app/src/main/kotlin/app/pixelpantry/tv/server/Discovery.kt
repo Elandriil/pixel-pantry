@@ -6,6 +6,8 @@ import android.net.nsd.NsdServiceInfo
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import java.net.Inet4Address
+import java.net.InetAddress
 
 data class Candidate(val host: String, val port: Int)
 
@@ -17,8 +19,43 @@ interface Discovery {
 class NsdDiscovery(context: Context) : Discovery {
     private val nsd = context.applicationContext.getSystemService(Context.NSD_SERVICE) as NsdManager
 
+    /** [timeoutMs] is ignored: the collector (ServerResolver) owns the timeout and cancels the flow. */
     @Suppress("DEPRECATION") // resolveService is deprecated on API 34+ but still works
     override fun candidates(timeoutMs: Long): Flow<Candidate> = callbackFlow {
+        // NsdManager allows one active resolve at a time, so found services are resolved one by one.
+        val lock = Any()
+        val pending = ArrayDeque<Pair<NsdServiceInfo, Boolean>>() // service, already retried
+        var resolving = false
+
+        fun resolveNext() {
+            val next = synchronized(lock) {
+                if (resolving) return
+                pending.removeFirstOrNull()?.also { resolving = true } ?: return
+            }
+            val (service, retried) = next
+            val finish = {
+                synchronized(lock) { resolving = false }
+                resolveNext()
+            }
+            try {
+                nsd.resolveService(service, object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                        if (errorCode == NsdManager.FAILURE_ALREADY_ACTIVE && !retried) {
+                            synchronized(lock) { pending.addLast(service to true) }
+                        }
+                        finish()
+                    }
+
+                    override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                        hostString(serviceInfo)?.let { trySend(Candidate(it, serviceInfo.port)) }
+                        finish()
+                    }
+                })
+            } catch (e: Exception) {
+                finish()
+            }
+        }
+
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {}
             override fun onDiscoveryStopped(serviceType: String) {}
@@ -26,15 +63,8 @@ class NsdDiscovery(context: Context) : Discovery {
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {}
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                runCatching {
-                    nsd.resolveService(serviceInfo, object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
-                        override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                            val host = serviceInfo.host?.hostAddress ?: return
-                            trySend(Candidate(host, serviceInfo.port))
-                        }
-                    })
-                }
+                synchronized(lock) { pending.addLast(serviceInfo to false) }
+                resolveNext()
             }
         }
         try {
@@ -43,6 +73,15 @@ class NsdDiscovery(context: Context) : Discovery {
             close()
         }
         awaitClose { runCatching { nsd.stopServiceDiscovery(listener) } }
+    }
+
+    /** Prefers IPv4; an IPv6 literal is bracketed so it can be used in a URL. */
+    @Suppress("DEPRECATION") // NsdServiceInfo.host is deprecated on API 34+ in favour of hostAddresses
+    private fun hostString(info: NsdServiceInfo): String? {
+        val addr: InetAddress = info.host ?: return null
+        val text = addr.hostAddress ?: return null
+        if (addr is Inet4Address) return text
+        return "[${text.substringBefore('%')}]"
     }
 
     private companion object {

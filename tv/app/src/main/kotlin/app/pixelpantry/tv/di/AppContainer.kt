@@ -8,8 +8,12 @@ import app.pixelpantry.tv.api.ApiClient
 import app.pixelpantry.tv.server.NsdDiscovery
 import app.pixelpantry.tv.server.ServerResolver
 import app.pixelpantry.tv.server.ServerStore
+import app.pixelpantry.tv.settings.SettingsRepo
 import coil.ImageLoader
 import coil.disk.DiskCache
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 
@@ -23,6 +27,8 @@ class AppContainer(private val app: Application) {
     val serverStore: ServerStore by lazy { ServerStore(dataStore) }
     val discovery: NsdDiscovery by lazy { NsdDiscovery(app) }
     val resolver: ServerResolver by lazy { ServerResolver(serverStore, discovery, ServerResolver.apiProbe(api)) }
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val settingsRepo: SettingsRepo by lazy { SettingsRepo(api, serverStore, scope) }
     val imageLoader: ImageLoader by lazy {
         ImageLoader.Builder(app)
             .okHttpClient(okHttp)

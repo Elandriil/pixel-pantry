@@ -19,12 +19,9 @@ class SettingsRepo(
     private val _settings = MutableStateFlow(DEFAULTS)
     val settings: StateFlow<Settings> = _settings.asStateFlow()
 
-    init {
-        scope.launch {
-            // Seed from cache only if nothing fresher has been emitted meanwhile.
-            val cached = store.cachedSettings.first() ?: return@launch
-            _settings.compareAndSet(DEFAULTS, cached)
-        }
+    // Cache is read first; refresh/update wait for it, so a fresher value is never overwritten by the cache.
+    private val seed = scope.launch {
+        store.cachedSettings.first()?.let { _settings.value = it }
     }
 
     suspend fun refresh() = publish(api.settings())
@@ -32,6 +29,7 @@ class SettingsRepo(
     suspend fun update(patch: SettingsPatch) = publish(api.updateSettings(patch))
 
     private suspend fun publish(s: Settings) {
+        seed.join()
         _settings.value = s
         store.setCachedSettings(s)
     }
