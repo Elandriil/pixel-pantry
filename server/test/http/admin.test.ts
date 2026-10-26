@@ -135,6 +135,28 @@ test("config PUT with a new TMDB key resets unmatched attempts and triggers a sc
   expect(deps.repo.getShow(matched.showId)!.match_attempted_at).toBe(10);
 });
 
+test("config PUT strips surrounding quotes from mediaRoot and rejects clearing it", async () => {
+  const deps = makeDeps();
+  spyOn(deps.scanner, "scan").mockImplementation(() => idleStatus(deps.scanner));
+  const app = buildApp(deps);
+  for (const [raw, stored] of [[' "D:\\My Media" ', "D:\\My Media"], ["'E:\\TV'", "E:\\TV"]]) {
+    expect((await request(app, "/admin/api/config", json("PUT", { mediaRoot: raw }), LOCAL)).status).toBe(200);
+    expect(deps.config().mediaRoot).toBe(stored!);
+  }
+  const empty = await request(app, "/admin/api/config", json("PUT", { mediaRoot: '  ""  ' }), LOCAL);
+  expect(empty.status).toBe(400);
+  expect(empty.json).toEqual({ error: "Media folder is required" });
+  expect(deps.config().mediaRoot).toBe("E:\\TV");
+});
+
+test("config PUT accepts an empty mediaRoot while none is set", async () => {
+  const deps = makeDeps();
+  deps.saveConfig({ ...deps.config(), mediaRoot: "" });
+  const app = buildApp(deps);
+  expect((await request(app, "/admin/api/config", json("PUT", { mediaRoot: "", port: 8765 }), LOCAL)).status).toBe(200);
+  expect(deps.config().mediaRoot).toBe("");
+});
+
 test("config PUT rejects an invalid port", async () => {
   const deps = makeDeps();
   const app = buildApp(deps);

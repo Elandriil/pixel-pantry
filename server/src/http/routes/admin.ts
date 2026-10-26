@@ -54,6 +54,22 @@ const secret = (v: unknown, field: string, old: string): string => {
   return s === undefined || s === MASK ? old : s;
 };
 
+/** Trimmed, with one pair of surrounding quotes removed (as pasted from Explorer's "Copy as path"). */
+function cleanPath(v: string): string {
+  const t = v.trim();
+  const m = /^"(.*)"$/s.exec(t) ?? /^'(.*)'$/s.exec(t);
+  return (m ? m[1]! : t).trim();
+}
+
+/** The new media folder; empty is only accepted while none has been set yet. */
+function mediaRootOf(v: unknown, old: string): string {
+  const s = str(v, "mediaRoot");
+  if (s === undefined) return old;
+  const root = cleanPath(s);
+  if (!root && old) throw new HttpError(400, "Media folder is required");
+  return root;
+}
+
 /** Merges a partial Config-shaped body onto the current config. */
 function mergeConfig(old: Config, body: Record<string, unknown>): Config {
   const port = body.port;
@@ -66,7 +82,7 @@ function mergeConfig(old: Config, body: Record<string, unknown>): Config {
   }
   const o = (os ?? {}) as Record<string, unknown>;
   return {
-    mediaRoot: str(body.mediaRoot, "mediaRoot")?.trim() ?? old.mediaRoot,
+    mediaRoot: mediaRootOf(body.mediaRoot, old.mediaRoot),
     port: (port as number | undefined) ?? old.port,
     tmdbApiKey: secret(body.tmdbApiKey, "tmdbApiKey", old.tmdbApiKey),
     opensubtitles: {

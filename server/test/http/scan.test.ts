@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { buildApp } from "../../src/http/app";
 import { makeDeps, request } from "./helpers";
 
 test("scan POST returns 202 and status flips to scanning then idle", async () => {
   const deps = makeDeps();
-  mkdirSync(deps.config().mediaRoot, { recursive: true });
+  // a category folder, so the scan walks instead of stopping at "No tv, anime or movies folder"
+  mkdirSync(join(deps.config().mediaRoot, "tv"), { recursive: true });
   const app = buildApp(deps);
   expect((await request(app, "/api/scan/status")).json.state).toBe("idle");
 

@@ -21,6 +21,7 @@
   .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #3a3f47; }
   .badge.on { background: #24713c; }
   .error { color: #ff6b6b; }
+  .banner { font-weight: 600; background: #3a1d1f; border: 1px solid #b3393b; border-radius: 4px; padding: 8px 12px; margin: 0 0 8px; }
   .note { color: #f0b95a; }
   .muted { color: #8b919a; }
   .row { border-top: 1px solid #2a2e35; padding: 8px 0; }
@@ -46,6 +47,7 @@
 
   <section id="status">
     <h2>Status</h2>
+    <p id="st-error" class="error banner" hidden></p>
     <dl>
       <dt>Open on TV</dt><dd id="st-urls"></dd>
       <dt>Media folder</dt><dd id="st-root"></dd>
@@ -54,7 +56,6 @@
       <dt>Library</dt><dd id="st-counts"></dd>
       <dt>Services</dt><dd><span id="st-tmdb" class="badge">TMDB</span> <span id="st-os" class="badge">OpenSubtitles</span></dd>
     </dl>
-    <p id="st-error" class="error" hidden></p>
   </section>
 
   <section id="settings">

@@ -13,7 +13,7 @@ import { fakeProbe, fakeTmdb, tmpDir, touch } from "./helpers";
 const DAY = 24 * 60 * 60 * 1000;
 
 function setup(opts: { root?: string; probe?: (absPath: string) => Promise<ProbeResult>; tmdb?: TmdbLike } = {}) {
-  const root = opts.root ?? tmpDir();
+  const root = opts.root === undefined ? tmpDir() : opts.root;
   const repo = new Repo(openDb(":memory:"));
   const tmdb = fakeTmdb();
   const probe = fakeProbe();
@@ -412,10 +412,27 @@ test("probe failure is stored and scan continues", async () => {
 });
 
 test("missing media folder sets lastError", async () => {
-  const ctx = setup({ root: join(tmpDir(), "nope") });
+  const root = join(tmpDir(), "nope");
+  const ctx = setup({ root });
   const st = await ctx.scanner.scan();
-  expect(st.lastError).toBe("Media folder not set");
+  expect(st.lastError).toBe(`Media folder not found: ${root}`);
   expect(st.state).toBe("idle");
+});
+
+test("media folder without tv, anime or movies sets lastError", async () => {
+  const root = tmpDir();
+  touch(join(root, "Severance", "Severance S01E01.mkv"), 10);
+  const ctx = setup({ root });
+  const st = await ctx.scanner.scan();
+  expect(st.lastError).toBe(`No tv, anime or movies folder in ${root}`);
+  expect(st.state).toBe("idle");
+  expect(st.phase).toBe("done");
+  expect(ctx.probe.calls).toEqual([]);
+});
+
+test("empty media folder setting sets lastError", async () => {
+  const ctx = setup({ root: "" });
+  expect((await ctx.scanner.scan()).lastError).toBe("Media folder not set");
 });
 
 test("episodes TMDB does not list do not refetch their season on rescan", async () => {

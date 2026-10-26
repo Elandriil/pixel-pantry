@@ -35,6 +35,7 @@ interface LiveFile {
   parsed: ParsedVideo;
 }
 
+const CATEGORIES = ["tv", "anime", "movies"] as const;
 const MATCH_RETRY_MS = 24 * 60 * 60 * 1000;
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -120,8 +121,13 @@ export class Scanner {
     this.walkStarted = true;
     try {
       const root = this.deps.mediaRoot();
-      if (!root || !existsSync(root)) {
+      if (!root) {
         this.st.lastError = "Media folder not set";
+      } else if (!existsSync(root)) {
+        // e.g. an unplugged drive: keep the library as it is rather than marking every file deleted
+        this.st.lastError = `Media folder not found: ${root}`;
+      } else if (!CATEGORIES.some((c) => existsSync(join(root, c)))) {
+        this.st.lastError = `No tv, anime or movies folder in ${root}`;
       } else {
         log.info("scan started", { root });
         await this.walkAndProbe(root);
