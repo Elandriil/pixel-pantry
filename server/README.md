@@ -13,6 +13,8 @@ bunx tsc --noEmit    # type check
 
 Layout: `src/` (server code: `http/`, `library/`, `metadata/`, `subtitles/`, `playback/`, `db/`, `fs/`), `src/http/admin/index.html` (admin page, embedded in the exe), `test/`, `scripts/` (packaging).
 
+Notes for the TV client (progress reporting, URLs, subtitle ids, address check): `docs/tv-client-notes.md`.
+
 ## Data directory
 
 `data/` next to the exe (or `server/data/` in dev). Override with `PANTRY_DATA_DIR`.
@@ -34,7 +36,7 @@ Note: `--windows-hide-console` is only available when building on Windows, so th
 
 ## First run on Windows
 
-1. Double-click `Start Pixel Pantry.vbs` (hides the console window; double-clicking `PixelPantry.exe` directly also works but shows a console window). A shortcut to the .vbs on the desktop or in the Startup folder (`shell:startup`) makes it start with Windows. SmartScreen: "More info" then "Run anyway").
+1. Double-click `Start Pixel Pantry.vbs` (hides the console window; double-clicking `PixelPantry.exe` directly also works but shows a console window). A shortcut to the .vbs on the desktop or in the Startup folder (`shell:startup`) makes it start with Windows. SmartScreen: "More info" then "Run anyway".
 2. Allow it through Windows Firewall on **private** networks when prompted.
 3. Open `http://localhost:8765/admin`.
 4. Set the media folder and a TMDB key (free account at themoviedb.org, Settings, API; paste the "API Read Access Token" or v3 key).

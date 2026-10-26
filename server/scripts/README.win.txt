@@ -3,7 +3,7 @@ Pixel Pantry server for Windows
 
 First run
 ---------
-1. Unzip this folder anywhere (for example C:\PixelPantry).
+1. Copy this folder anywhere (for example C:\PixelPantry).
 2. Double-click "Start Pixel Pantry.vbs" (hides the console window). Double-clicking
    PixelPantry.exe directly also works but shows a console window. Keep
    ffprobe.exe in the same folder. For autostart, put a shortcut to the .vbs on
