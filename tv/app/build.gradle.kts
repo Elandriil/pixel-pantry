@@ -22,7 +22,10 @@ android {
 
     buildTypes {
         release {
+            // Sideload build for the TV: not minified, and signed with the debug key so `assembleRelease` yields
+            // an installable APK without a release keystore (see README, "Sideloading on the Bravia").
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

@@ -22,7 +22,14 @@ SDK packages: `platform-tools`, `platforms;android-34`, `platforms;android-35`
 ```sh
 ./gradlew :app:testDebugUnitTest   # unit tests
 ./gradlew :app:assembleDebug       # app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:assembleRelease     # app/build/outputs/apk/release/app-release.apk (sideload build, see below)
 ```
+
+The release build (`versionName` 0.1.0, `versionCode` 1) is **not minified and is signed with the debug key**
+(`signingConfig = signingConfigs.getByName("debug")` in `app/build.gradle.kts`), so it installs without a release
+keystore. That is fine for sideloading onto your own TV; it is not a Play Store build. Because both builds share
+the application id and the debug key, `adb install -r` of one over the other keeps the app's data (server
+address, cached settings).
 
 ## Emulator
 
@@ -44,15 +51,36 @@ adb shell am start -n app.pixelpantry.tv/.MainActivity   # or: adb shell monkey 
 adb exec-out screencap -p > shot.png
 ```
 
-## Sideload to the Sony Bravia (Google TV)
+## Sideloading on the Bravia (Google TV)
 
-1. On the TV: Settings → Device Preferences → About → tap **Build** 7 times to enable developer mode.
-2. Settings → Device Preferences → Developer options → turn on **Network debugging** (USB debugging too if offered).
-3. From the Mac (same network), using the TV's IP address:
+1. On the TV: Settings → System → About → tap **Android TV OS build** 7 times to enable developer mode
+   (older menus: Settings → Device Preferences → About → **Build**).
+2. Settings → System → Developer options → turn on **USB debugging** and, where offered, **Network debugging**
+   (ADB over the network, port 5555).
+3. Build and install from the Mac (same network), using the TV's IP address:
 
    ```sh
-   adb connect <tv-ip>:5555        # accept the prompt on the TV the first time
-   adb install -r app/build/outputs/apk/debug/app-debug.apk
+   ./gradlew :app:assembleRelease
+   adb connect <tv-ip>:5555        # accept the "Allow USB debugging?" prompt on the TV the first time
+   adb -s <tv-ip>:5555 install -r app/build/outputs/apk/release/app-release.apk
+   adb -s <tv-ip>:5555 shell am start -n app.pixelpantry.tv/.MainActivity
    ```
 
-4. Pixel Pantry appears in the TV's app row (leanback banner).
+   These are the same commands the emulator walkthrough uses (`adb install -r …/app-release.apk`, `am start`), with
+   `-s <tv-ip>:5555` added because the emulator may be attached too.
+4. Pixel Pantry appears in the TV's app row (leanback banner). On first start it finds the server by mDNS, or asks
+   for `host:port`; after that it starts straight on Home with the stored address and checks it in the background
+   (a toast says so if the server does not answer; every page then offers Retry / Change server).
+
+### First-run checklist on the TV (not covered by the emulator)
+
+- [ ] **CH+ / CH−** on the Bravia remote switch to the next / previous episode (toast names the episode).
+- [ ] **Hold-to-repeat skip**: holding LEFT / RIGHT keeps skipping by the configured amounts.
+- [ ] **Long-press OK** (and the remote's menu key, if any) opens the episode menu on the show page.
+- [ ] **Subtitles with a real MKV's embedded tracks**: default / forced flags pick the right track with no stored
+      choice; a chosen track is restored on the next play; sidecar `.srt` and sub delay still work.
+- [ ] **mDNS on the home network**: a fresh install (or "Use automatic discovery" in Settings) finds the PC's
+      server without typing an address.
+- [ ] **TMDB key on the server** (admin page) so posters, backdrops and stills load; without it cards show the
+      title on a plain card, which is expected.
+- [ ] Unplug / sleep the PC while browsing: the page shows "Cannot reach the server" with the address and Retry.
