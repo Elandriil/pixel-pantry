@@ -68,6 +68,8 @@ class PlayerViewModel(
         val saveChoiceFailed: (String) -> String,
         /** The chosen (or stored) audio track cannot be decoded here; the player's own choice stays. */
         val audioUnsupported: String,
+        /** A chosen subtitle file showed nothing for a while where it has timestamps (likely unparsable). */
+        val noCuesInFile: String,
     )
 
     /** The panel open over the playing video. */
@@ -200,6 +202,10 @@ class PlayerViewModel(
      */
     private var downloadJob: Job? = null
 
+    /** Watches the chosen sidecar for showing nothing ([NoCueWatch]); null for other choices. */
+    private var cueWatch: NoCueWatch? = null
+    private var cueWatchJob: Job? = null
+
     /** The re-prepare for a sub delay change, [SUB_DELAY_DEBOUNCE_MS] after the last press. */
     private var delayJob: Job? = null
     private var persistJob: Job? = null
@@ -227,6 +233,10 @@ class PlayerViewModel(
         override fun onTracksChanged() = applyPendingTracks()
 
         override fun onSidecarFailed(uri: String) = dropSidecar(uri)
+
+        override fun onCues(hasText: Boolean) {
+            if (hasText) cueWatch?.onCue()
+        }
     }
 
     init {
@@ -326,6 +336,7 @@ class PlayerViewModel(
             subtitleChoice = subtitle,
             audioChoice = plan.audioChoice,
         )
+        watchCues(subtitle)
         startTicker()
     }
 
@@ -406,6 +417,7 @@ class PlayerViewModel(
         delayJob?.cancel()
         val delay = if (id == s.subtitleChoice) s.subDelayMs else 0
         updatePlaying { it.copy(subtitleChoice = id, subtitleLabel = subtitleLabel(d, id), subDelayMs = delay) }
+        if (id != s.subtitleChoice) watchCues(id)
         if (SubtitlePlan.isSidecar(id) && !loadedUnshifted(d, id, delay)) {
             reprepare(d, id, delay)
         } else {
@@ -434,6 +446,36 @@ class PlayerViewModel(
             selectedEmbeddedIndex = null,
             selectedSidecarUri = configs.firstOrNull { it.selected }?.uri,
         )
+    }
+
+    /**
+     * Starts watching the chosen subtitle (when it is a sidecar) for showing nothing: its file's timestamps give
+     * the range where cues must appear. Another choice (or a failed fetch of the file) watches nothing.
+     */
+    private fun watchCues(choice: String) {
+        cueWatchJob?.cancel()
+        cueWatch = null
+        val d = detail ?: return
+        if (!SubtitlePlan.isSidecar(choice)) return
+        val url = d.subtitles.firstOrNull { it.id == choice }?.url ?: return
+        val itemId = currentItemId
+        cueWatchJob = viewModelScope.launch {
+            val text = try {
+                api.text(url)
+            } catch (e: ApiException) {
+                return@launch
+            }
+            val now = _state.value as? UiState.Playing ?: return@launch
+            if (currentItemId != itemId || now.subtitleChoice != choice) return@launch
+            cueWatch = NoCueWatch(NoCueWatch.rangeOf(text))
+        }
+    }
+
+    private fun checkCues(positionMs: Long) {
+        val watch = cueWatch ?: return
+        val s = _state.value as? UiState.Playing ?: return
+        // The file's own time: a sub delay shows cue t at t + delay.
+        if (watch.onTick(positionMs - s.subDelayMs, port.isPlaying, TICK_MS)) toaster.show(strings.noCuesInFile)
     }
 
     /** Plays audio track `audio:<index>` and saves the choice. */
@@ -499,6 +541,7 @@ class PlayerViewModel(
         updatePlaying {
             it.copy(detail = remaining, subtitleChoice = choice, subtitleLabel = subtitleLabel(remaining, choice), subDelayMs = delay)
         }
+        if (choice != s.subtitleChoice) watchCues(choice)
         reprepare(remaining, choice, delay)
         toaster.show(strings.sidecarFailed)
     }
@@ -770,6 +813,7 @@ class PlayerViewModel(
                 val position = port.currentPositionMs
                 val duration = port.durationMs
                 updatePlaying { it.copy(positionMs = position, durationMs = duration) }
+                checkCues(position)
                 // Off the ticker so a slow server never stalls the position; one report in flight at a time.
                 if (port.isPlaying && duration != null && duration > 0 && reportJob?.isActive != true) {
                     reportJob = launch { reporter.tick(position / 1000.0, duration / 1000.0) }

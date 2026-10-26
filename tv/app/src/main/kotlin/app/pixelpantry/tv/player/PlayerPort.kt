@@ -60,6 +60,9 @@ interface PlayerListener {
     /** [PlayerPort.textTracks] / [PlayerPort.audioTracks] or their selection changed. */
     fun onTracksChanged() {}
 
+    /** The cues on screen changed; [hasText]: at least one is shown (false: they were cleared). */
+    fun onCues(hasText: Boolean) {}
+
     /** Sidecar file [uri] could not be loaded; playback goes on without it. */
     fun onSidecarFailed(uri: String) {}
 

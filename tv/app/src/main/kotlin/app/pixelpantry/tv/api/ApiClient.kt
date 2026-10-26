@@ -66,6 +66,24 @@ class ApiClient(private val http: OkHttpClient, private val json: Json) {
         })
     }
 
+    /** The body of [url] (absolute, or a server path) as text, e.g. a sidecar subtitle file. */
+    suspend fun text(url: String): String = withContext(Dispatchers.IO) {
+        val request = try {
+            Request.Builder().url(resolve(url)).build()
+        } catch (e: IllegalArgumentException) {
+            throw ApiException(0, "Cannot reach $baseUrl")
+        }
+        try {
+            http.newCall(request).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) throw ApiException(resp.code, errorMessage(text, resp.message, resp.code))
+                text
+            }
+        } catch (e: IOException) {
+            throw ApiException(0, "Cannot reach $baseUrl")
+        }
+    }
+
     suspend fun subtitles(itemId: Int): SubtitleListResponse = get("/api/items/$itemId/subtitles")
     suspend fun searchSubtitles(itemId: Int): SubtitleSearchResponse = get("/api/items/$itemId/subtitles/search")
 

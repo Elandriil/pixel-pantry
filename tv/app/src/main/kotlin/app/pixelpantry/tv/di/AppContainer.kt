@@ -83,6 +83,7 @@ class AppContainer(private val app: Application, private val dataStoreOverride: 
             sidecarFailed = app.getString(R.string.player_sidecar_failed),
             saveChoiceFailed = { app.getString(R.string.player_save_choice_failed, it) },
             audioUnsupported = app.getString(R.string.player_audio_unsupported),
+            noCuesInFile = app.getString(R.string.player_no_cues_in_file),
         )
     }
     val historyStrings: HistoryViewModel.Strings by lazy {

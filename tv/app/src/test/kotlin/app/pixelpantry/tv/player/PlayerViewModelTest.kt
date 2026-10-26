@@ -65,6 +65,7 @@ class PlayerViewModelTest {
     /** Progress posts for item 5 (the next episode) in arrival order. */
     private val progressPosts5 = ConcurrentLinkedQueue<JsonObject>()
     private var settingsBody: () -> MockResponse = { MockResponse().setResponseCode(404) }
+    private var sidecarBody: () -> MockResponse = { MockResponse().setResponseCode(404) }
     private var item5DelayMs = 0L
     private var item5Body: () -> MockResponse = { json(item5Fixture()) }
     private lateinit var settings: SettingsRepo
@@ -99,6 +100,7 @@ class PlayerViewModelTest {
         sidecarFailed = "Subtitle file could not be loaded",
         saveChoiceFailed = { "Could not save the track choice: $it" },
         audioUnsupported = "Audio track not supported on this TV",
+        noCuesInFile = "No subtitles found in this file",
     )
 
     @Before fun setUp() {
@@ -130,6 +132,7 @@ class PlayerViewModelTest {
                         downloadPosts += Json.parseToJsonElement(request.body.readUtf8()) as JsonObject
                         json(DOWNLOADED).setHeadersDelay(downloadDelayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
                     }
+                    "GET /api/items/4/subtitles/sidecar/Severance%20S01E01.en.srt" -> sidecarBody()
                     "GET /api/items/4/subtitles" -> json("""{"tracks":[$EMBEDDED_3,$SIDECAR_EN,$DOWNLOADED]}""")
                     else -> MockResponse().setResponseCode(404)
                 }
@@ -1351,6 +1354,56 @@ class PlayerViewModelTest {
         vm.selectSubtitle(sidecarEn)
         tracksArrive(sidecarEn)
         assertTrue(port.audioSelections.isEmpty())
+    }
+
+    // A sidecar that shows nothing (minor)
+
+    /** The file covers 0:00–1:00:00; playback sits at 12:34 inside it. */
+    private val srt = "1\n00:00:01,000 --> 00:00:04,000\nHi\n\n2\n00:59:56,000 --> 01:00:00,000\nBye\n"
+
+    /**
+     * Waits until the watch has the file. The player counts as paused meanwhile: virtual time runs on by itself
+     * while the test waits in real time.
+     */
+    private suspend fun TestScope.watchArmed() {
+        port.playing = false
+        awaitRealTime { requests.any { it.startsWith("GET /api/items/4/subtitles/sidecar/") } }
+        withContext(Dispatchers.Default) { delay(200) }
+        runCurrent()
+        port.playing = true
+    }
+
+    @Test fun aSidecarShowingNothingInItsRangeToastsOnce() = playerTest {
+        sidecarBody = { MockResponse().setBody(srt) }
+        itemBody = subtitledItem(subtitleChoice = sidecarEn)
+        val vm = vm()
+        vm.playing()
+        watchArmed()
+        advanceTimeBy(19_000)
+        assertNull(toaster.current.value)
+        advanceTimeBy(1_600)
+        assertEquals("No subtitles found in this file", toaster.current.value)
+    }
+
+    @Test fun aSidecarThatShowsACueRaisesNothing() = playerTest {
+        sidecarBody = { MockResponse().setBody(srt) }
+        itemBody = subtitledItem(subtitleChoice = sidecarEn)
+        val vm = vm()
+        vm.playing()
+        watchArmed()
+        port.fire { it.onCues(true) }
+        advanceTimeBy(30_000)
+        assertNull(toaster.current.value)
+    }
+
+    @Test fun playbackOutsideTheSidecarsRangeRaisesNothing() = playerTest {
+        sidecarBody = { MockResponse().setBody("1\n00:00:01,000 --> 00:00:04,000\nHi\n") }
+        itemBody = subtitledItem(subtitleChoice = sidecarEn)
+        val vm = vm()
+        vm.playing() // at 12:34, past the file's last cue
+        watchArmed()
+        advanceTimeBy(30_000)
+        assertNull(toaster.current.value)
     }
 
     @Test fun searchOnlineShowsTheServersMessage() = playerTest {
