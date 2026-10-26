@@ -32,6 +32,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -191,6 +192,9 @@ private fun Page(
     val primaryFocus = remember { FocusRequester() }
     val scroll = rememberScrollState()
     val scope = rememberCoroutineScope()
+    // Whether the page was shown before (survives the trip to the player) / resumed in this composition.
+    var shownBefore by rememberSaveable { mutableStateOf(false) }
+    val resumedHere = remember { booleanArrayOf(false) }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val backdropHeight = maxHeight * 0.45f
@@ -225,6 +229,15 @@ private fun Page(
         }
     }
     LaunchedEffect(Unit) { runCatching { primaryFocus.requestFocus() } }
+    // Coming back from the player the request above does not take: focus entering the shell's content goes
+    // through its focus restorer, which aims at the last focused episode card (not composed yet) and leaves a
+    // focused group with no focused element. Once resumed, focus is already inside the group, so requesting
+    // the primary button is a move within it and works.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (shownBefore && !resumedHere[0]) runCatching { primaryFocus.requestFocus() }
+        resumedHere[0] = true
+        shownBefore = true
+    }
 }
 
 @Composable

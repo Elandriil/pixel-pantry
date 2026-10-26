@@ -1,12 +1,17 @@
 package app.pixelpantry.tv.di
 
 import android.app.Application
+import android.os.SystemClock
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
 import app.pixelpantry.tv.R
 import app.pixelpantry.tv.api.ApiClient
 import app.pixelpantry.tv.library.LibraryScanner
+import app.pixelpantry.tv.player.PlaybackErrorTexts
+import app.pixelpantry.tv.player.PlayerViewModel
+import app.pixelpantry.tv.player.ProgressReporter
 import app.pixelpantry.tv.server.NsdDiscovery
 import app.pixelpantry.tv.server.ServerResolver
 import app.pixelpantry.tv.server.ServerStore
@@ -54,6 +59,28 @@ class AppContainer(private val app: Application) {
             movedToRecycleBin = app.getString(R.string.delete_moved),
         )
     }
+    val playerStrings: PlayerViewModel.Strings by lazy {
+        PlayerViewModel.Strings(
+            playbackFailed = app.getString(R.string.player_playback_failed),
+            comingLater = app.getString(R.string.player_coming_later),
+            subtitlesOff = app.getString(R.string.player_subtitles_off),
+            audioDefault = app.getString(R.string.player_audio_default),
+        )
+    }
+    val playbackErrorTexts: PlaybackErrorTexts by lazy {
+        PlaybackErrorTexts(
+            connectionLost = app.getString(R.string.player_error_connection),
+            serverError = { app.getString(R.string.player_error_http, it) },
+            notFound = app.getString(R.string.player_error_not_found),
+            unsupportedFormat = app.getString(R.string.player_error_format),
+            other = { message, code -> app.getString(R.string.player_error_other, message, code) },
+        )
+    }
+
+    /** One reporter per playback screen. */
+    fun progressReporter(): ProgressReporter =
+        ProgressReporter(api, clock = SystemClock::elapsedRealtime, onError = { Log.w("ProgressReporter", it) })
+
     val settingsRepo: SettingsRepo by lazy { SettingsRepo(api, serverStore, scope) }
     val imageLoader: ImageLoader by lazy {
         ImageLoader.Builder(app)

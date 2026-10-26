@@ -78,8 +78,25 @@
     <string name="dialog_cancel">Cancel</string>
     <string name="dialog_delete">Delete</string>
 
-    <!-- Stand-in until the player exists -->
-    <string name="placeholder_player">Player %1$d</string>
+    <!-- Player -->
+    <string name="player_playback_failed">Playback failed</string>
+    <string name="player_back">Back</string>
+    <string name="player_coming_later">Coming in a later step</string>
+    <string name="player_subtitles_off">Off</string>
+    <string name="player_audio_default">Default</string>
+    <string name="player_prev">⏮︎ Prev</string>
+    <string name="player_pause">⏸︎ Pause</string>
+    <string name="player_play">▶︎ Play</string>
+    <string name="player_next">⏭︎ Next episode</string>
+    <string name="player_audio">Audio: %1$s</string>
+    <string name="player_subtitles">Subtitles: %1$s</string>
+    <string name="player_sub_delay">Sub delay: %1$s</string>
+    <string name="player_remaining">-%1$s</string>
+    <string name="player_error_connection">Lost connection to the server</string>
+    <string name="player_error_http">The server answered with an error (HTTP %1$d)</string>
+    <string name="player_error_not_found">The file is no longer on the server</string>
+    <string name="player_error_format">This TV cannot play this video\'s format</string>
+    <string name="player_error_other">%1$s (%2$s)</string>
 
     <!-- Generic -->
     <string name="loading">Loading…</string>

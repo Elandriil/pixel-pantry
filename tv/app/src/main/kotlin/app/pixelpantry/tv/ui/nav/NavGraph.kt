@@ -7,6 +7,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.lifecycle.Lifecycle
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavBackStackEntry
@@ -18,6 +19,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.pixelpantry.tv.R
 import app.pixelpantry.tv.di.AppContainer
+import app.pixelpantry.tv.player.ExoPlayerPort
+import app.pixelpantry.tv.player.PlayerScreen
+import app.pixelpantry.tv.player.PlayerViewModel
 import app.pixelpantry.tv.ui.components.ImageSource
 import app.pixelpantry.tv.ui.components.LocalImageSource
 import app.pixelpantry.tv.ui.components.SidebarEntry
@@ -169,15 +173,29 @@ fun NavGraph(container: AppContainer) {
                 composable(Routes.MOVIE, arguments = listOf(navArgument("id") { type = NavType.IntType })) {
                     DetailPage(it, showId = null, movieItemId = it.arguments?.getInt("id") ?: 0)
                 }
-                // Player stand-in until Task 8, so Play has somewhere to go.
                 composable(
                     Routes.PLAYER,
                     arguments = listOf(
                         navArgument("itemId") { type = NavType.IntType },
                         navArgument("fromStart") { type = NavType.BoolType; defaultValue = false },
                     ),
-                ) {
-                    PlaceholderScreen(stringResource(R.string.placeholder_player, it.arguments?.getInt("itemId") ?: 0))
+                ) { backStack ->
+                    val itemId = backStack.arguments?.getInt("itemId") ?: 0
+                    val fromStart = backStack.arguments?.getBoolean("fromStart") ?: false
+                    val context = LocalContext.current.applicationContext
+                    val vm: PlayerViewModel = viewModel(
+                        factory = PlayerViewModel.Factory(
+                            container.api, container.settingsRepo, container::progressReporter, container.toaster,
+                            container.playerStrings, itemId, fromStart,
+                            port = { ExoPlayerPort(context, container.playbackErrorTexts) },
+                        ),
+                    )
+                    PlayerScreen(vm, onNavigate = { event ->
+                        if (!backStack.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@PlayerScreen
+                        when (event) {
+                            PlayerViewModel.NavEvent.Back -> nav.popBackStack()
+                        }
+                    })
                 }
             }
             ToastHost(container.toaster)
