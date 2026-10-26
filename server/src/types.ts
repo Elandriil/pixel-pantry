@@ -13,7 +13,7 @@ export interface CategoryPage { category: Category | 'home'; rows: Row[] }
 export interface SeasonDetail { number: number; name: string; poster: string | null; episodes: ItemSummary[] }
 export interface ShowDetail { show: ShowSummary; seasons: SeasonDetail[]; resume: ItemSummary | null }
 export interface ItemDetail { item: ItemSummary; streamUrl: string; fileName: string; fileSize: number; audio: Track[]; subtitles: SubtitleTrack[]; next: ItemSummary | null; prev: ItemSummary | null; subtitleChoice: string | null; audioChoice: string | null }
-export interface SubtitleTrack { id: string /* "embedded:3" | "sidecar:<n>" */; label: string; lang: string | null; url: string | null /* null for embedded */; format: 'srt' | 'vtt' | 'ass' | 'embedded' }
+export interface SubtitleTrack { id: string /* "embedded:3" | "sidecar:<encodeURIComponent(basename)>" */; label: string; lang: string | null; url: string | null /* null for embedded */; format: 'srt' | 'vtt' | 'ass' | 'embedded' }
 export interface Settings { skipBackSeconds: number; skipForwardSeconds: number; autoplayNext: boolean }
 
 /** A value fixed at construction or read fresh on every use (e.g. a getter over the live config). */

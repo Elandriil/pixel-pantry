@@ -1,16 +1,15 @@
 import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { ItemRow } from "../../library/repo";
 import type { OsSearch } from "../../subtitles/opensubtitles";
 import { openSubtitlesHash } from "../../subtitles/hash";
 import { listSidecars, saveSidecar, type SidecarTrack } from "../../subtitles/sidecar";
 import { shiftSubtitle } from "../../subtitles/shift";
-import type { SubtitleTrack } from "../../types";
 import { jsonBody } from "../body";
 import type { Deps } from "../deps";
 import { HttpError } from "../errors";
-import { embeddedTracks, liveFiles, liveItem, parseId } from "./catalog";
+import { liveFiles, liveItem, parseId, sidecarsOf, sidecarTrack, subtitleTracks } from "./catalog";
 
 const CONTENT_TYPES: Record<SidecarTrack["format"], string> = {
   srt: "application/x-subrip",
@@ -19,19 +18,6 @@ const CONTENT_TYPES: Record<SidecarTrack["format"], string> = {
 };
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
-
-function toTrack(itemId: number, t: SidecarTrack, n: number): SubtitleTrack {
-  return { id: `sidecar:${n}`, label: t.label, lang: t.lang, url: `/api/items/${itemId}/subtitles/sidecar/${n}`, format: t.format };
-}
-
-/** Sidecars next to a video; none when its folder cannot be read. */
-async function sidecarsOf(videoAbsPath: string): Promise<SidecarTrack[]> {
-  try {
-    return await listSidecars(videoAbsPath);
-  } catch {
-    return [];
-  }
-}
 
 /** OpenSubtitles calls fail with 503: not configured, or upstream trouble. */
 async function upstream<T>(deps: Deps, what: string, fn: () => Promise<T>): Promise<T> {
@@ -67,15 +53,15 @@ export function subtitleRoutes(deps: Deps): Hono {
   };
 
   r.get("/items/:id/subtitles", async (c) => {
-    const { item, file, abs } = video(c.req.param("id"));
-    const sidecars = (await sidecarsOf(abs)).map((t, n) => toTrack(item.id, t, n));
-    return c.json({ tracks: [...embeddedTracks(file), ...sidecars] });
+    const { item, file } = video(c.req.param("id"));
+    return c.json({ tracks: await subtitleTracks(deps, item.id, file) });
   });
 
-  r.get("/items/:id/subtitles/sidecar/:n", async (c) => {
+  r.get("/items/:id/subtitles/sidecar/:name", async (c) => {
     const { abs } = video(c.req.param("id"));
-    const n = Number(c.req.param("n"));
-    const track = Number.isInteger(n) ? (await sidecarsOf(abs))[n] : undefined;
+    const name = c.req.param("name"); // decoded by Hono
+    // looked up among the listed sidecars, never joined into a path
+    const track = (await sidecarsOf(abs)).find((t) => basename(t.path) === name);
     if (!track) throw new HttpError(404, "Subtitle not found");
     const shift = Number(c.req.query("shift") ?? 0);
     if (!Number.isSafeInteger(shift)) throw new HttpError(400, "shift must be an integer (ms)");
@@ -104,11 +90,10 @@ export function subtitleRoutes(deps: Deps): Hono {
     const fileId = b.fileId;
     const text = await upstream(deps, "download", () => deps.os.download(fileId));
     const saved = await saveSidecar(abs, text);
-    const sidecars = await listSidecars(abs);
-    const n = sidecars.findIndex((t) => t.path === saved);
-    if (n < 0) throw new Error(`saved subtitle not listed: ${saved}`);
+    const track = (await listSidecars(abs)).find((t) => t.path === saved);
+    if (!track) throw new Error(`saved subtitle not listed: ${saved}`);
     deps.log.info("subtitle downloaded", { itemId: item.id, path: saved });
-    return c.json(toTrack(item.id, sidecars[n]!, n));
+    return c.json(sidecarTrack(item.id, track));
   });
 
   return r;

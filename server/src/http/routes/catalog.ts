@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
 import { Hono } from "hono";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import type { Track } from "../../library/probe";
 import type { FileRow, ItemRow, ShowRow } from "../../library/repo";
 import { imageUrl } from "../../metadata/images";
 import { continueWatching, getPlayback } from "../../playback/progress";
+import { listSidecars, type SidecarTrack } from "../../subtitles/sidecar";
 import type {
   Card, Category, CategoryPage, ItemDetail, ItemSummary, Row, SeasonDetail, ShowDetail, ShowSummary, SubtitleTrack,
 } from "../../types";
@@ -193,7 +194,28 @@ export function embeddedTracks(file: FileRow): SubtitleTrack[] {
   }));
 }
 
-function itemDetail(deps: Deps, item: ItemRow): ItemDetail {
+/** A sidecar as a track: its id and URL carry the file's basename, so they stay valid when other sidecars appear. */
+export function sidecarTrack(itemId: number, t: SidecarTrack): SubtitleTrack {
+  const name = encodeURIComponent(basename(t.path));
+  return { id: `sidecar:${name}`, label: t.label, lang: t.lang, url: `/api/items/${itemId}/subtitles/sidecar/${name}`, format: t.format };
+}
+
+/** Sidecars next to a video; none when its folder cannot be read. */
+export async function sidecarsOf(videoAbsPath: string): Promise<SidecarTrack[]> {
+  try {
+    return await listSidecars(videoAbsPath);
+  } catch {
+    return [];
+  }
+}
+
+/** Embedded tracks of the file, then the sidecars next to it. */
+export async function subtitleTracks(deps: Deps, itemId: number, file: FileRow): Promise<SubtitleTrack[]> {
+  const sidecars = await sidecarsOf(join(deps.config().mediaRoot, file.rel_path));
+  return [...embeddedTracks(file), ...sidecars.map((t) => sidecarTrack(itemId, t))];
+}
+
+async function itemDetail(deps: Deps, item: ItemRow): Promise<ItemDetail> {
   const show = item.show_id !== null ? liveShow(deps, item.show_id) : null;
   const file = liveFiles(deps.repo.filesForItem(item.id))[0];
   if (!file) throw new HttpError(404, "Item has no file");
@@ -207,7 +229,7 @@ function itemDetail(deps: Deps, item: ItemRow): ItemDetail {
     if (i >= 0 && i < eps.length - 1) next = toItemSummary(deps, eps[i + 1]!, show);
   }
 
-  const subtitles = embeddedTracks(file);
+  const subtitles = await subtitleTracks(deps, item.id, file);
   const p = getPlayback(deps.db, item.id);
   return {
     item: toItemSummary(deps, item, show),
@@ -244,7 +266,7 @@ export function catalogRoutes(deps: Deps): Hono {
 
   r.get("/shows/:id", (c) => c.json(showDetail(deps, liveShow(deps, parseId(c.req.param("id"))))));
 
-  r.get("/items/:id", (c) => c.json(itemDetail(deps, liveItem(deps, parseId(c.req.param("id"))))));
+  r.get("/items/:id", async (c) => c.json(await itemDetail(deps, liveItem(deps, parseId(c.req.param("id"))))));
 
   r.get("/search", (c) => {
     const q = (c.req.query("q") ?? "").trim();

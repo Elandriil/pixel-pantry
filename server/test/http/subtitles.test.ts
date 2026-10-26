@@ -41,22 +41,63 @@ test("subtitle list is embedded tracks first, then sidecars", async () => {
   expect(r.status).toBe(200);
   expect(r.json.tracks).toEqual([
     { id: "embedded:3", label: "English", lang: "eng", url: null, format: "embedded" },
-    { id: "sidecar:0", label: "English", lang: "en", url: `/api/items/${id}/subtitles/sidecar/0`, format: "srt" },
-    { id: "sidecar:1", label: "Sidecar (VTT)", lang: null, url: `/api/items/${id}/subtitles/sidecar/1`, format: "vtt" },
+    { id: "sidecar:Heat.en.srt", label: "English", lang: "en", url: `/api/items/${id}/subtitles/sidecar/Heat.en.srt`, format: "srt" },
+    { id: "sidecar:Heat.vtt", label: "Sidecar (VTT)", lang: null, url: `/api/items/${id}/subtitles/sidecar/Heat.vtt`, format: "vtt" },
   ]);
   expect((await request(app, `/api/items/999/subtitles`)).status).toBe(404);
+});
+
+test("sidecar ids are stable basenames that survive another sidecar appearing", async () => {
+  const { id, video, app } = setup();
+  writeFileSync(video.replace(".mkv", ".vtt"), "WEBVTT\n");
+  const before = (await request(app, `/api/items/${id}/subtitles`)).json.tracks;
+  writeFileSync(video.replace(".mkv", ".en.srt"), SRT); // sorts before Heat.vtt
+  const after = (await request(app, `/api/items/${id}/subtitles`)).json.tracks;
+  expect(after.map((t: any) => t.id)).toEqual(["sidecar:Heat.en.srt", "sidecar:Heat.vtt"]);
+  expect(after.find((t: any) => t.id === before[0].id)).toEqual(before[0]);
+  expect(await (await app.request(before[0].url)).text()).toBe("WEBVTT\n");
+});
+
+test("sidecar names with spaces are URL-encoded; unknown or traversal names are 404", async () => {
+  const deps = makeDeps();
+  const id = seedMovie(deps.repo, "Heat");
+  deps.db.run("UPDATE files SET rel_path = ? WHERE item_id = ?", ["movies/Heat 1995.mkv", id]);
+  const video = join(deps.config().mediaRoot, "movies/Heat 1995.mkv");
+  touch(video, 10);
+  writeFileSync(join(deps.config().mediaRoot, "movies/Heat 1995.en.srt"), SRT);
+  writeFileSync(join(deps.config().mediaRoot, "x.srt"), SRT);
+  const app = buildApp(deps);
+  const [track] = (await request(app, `/api/items/${id}/subtitles`)).json.tracks;
+  expect(track).toMatchObject({ id: "sidecar:Heat%201995.en.srt", url: `/api/items/${id}/subtitles/sidecar/Heat%201995.en.srt` });
+  expect(await (await app.request(track.url)).text()).toBe(SRT);
+  for (const name of ["..%2Fx.srt", "x.srt", "0", "Heat%201995.en.srt%00"]) {
+    expect((await app.request(`/api/items/${id}/subtitles/sidecar/${name}`)).status).toBe(404);
+  }
+});
+
+test("item detail lists embedded tracks and sidecars", async () => {
+  const { deps, id, video, app } = setup();
+  deps.db.run("UPDATE files SET subtitle_tracks = ? WHERE item_id = ?", [
+    JSON.stringify([{ index: 2, codec: "subrip", language: "eng", title: null, default: false, forced: false }]),
+    id,
+  ]);
+  writeFileSync(video.replace(".mkv", ".en.srt"), SRT);
+  const detail = await request(app, `/api/items/${id}`);
+  const list = await request(app, `/api/items/${id}/subtitles`);
+  expect(detail.json.subtitles.map((t: any) => t.id)).toEqual(["embedded:2", "sidecar:Heat.en.srt"]);
+  expect(detail.json.subtitles).toEqual(list.json.tracks);
 });
 
 test("sidecar is served with its content type, shifted when ?shift=500", async () => {
   const { id, video, app } = setup();
   writeFileSync(video.replace(".mkv", ".en.srt"), SRT);
-  const plain = await app.request(`/api/items/${id}/subtitles/sidecar/0`);
+  const plain = await app.request(`/api/items/${id}/subtitles/sidecar/Heat.en.srt`);
   expect(plain.headers.get("Content-Type")).toStartWith("application/x-subrip");
   expect(await plain.text()).toBe(SRT);
-  const shifted = await app.request(`/api/items/${id}/subtitles/sidecar/0?shift=500`);
+  const shifted = await app.request(`/api/items/${id}/subtitles/sidecar/Heat.en.srt?shift=500`);
   expect(await shifted.text()).toBe("1\n00:00:01,500 --> 00:00:02,500\nHello\n");
-  expect((await app.request(`/api/items/${id}/subtitles/sidecar/1`)).status).toBe(404);
-  expect((await app.request(`/api/items/${id}/subtitles/sidecar/0?shift=abc`)).status).toBe(400);
+  expect((await app.request(`/api/items/${id}/subtitles/sidecar/Heat.vtt`)).status).toBe(404);
+  expect((await app.request(`/api/items/${id}/subtitles/sidecar/Heat.en.srt?shift=abc`)).status).toBe(400);
 });
 
 test("search returns 503 when OpenSubtitles is not configured", async () => {
@@ -105,10 +146,12 @@ test("download creates <base>.en.srt and the list then includes it", async () =>
     body: JSON.stringify({ fileId: 7 }),
   });
   expect(r.status).toBe(200);
-  expect(r.json).toEqual({ id: "sidecar:0", label: "English", lang: "en", url: `/api/items/${id}/subtitles/sidecar/0`, format: "srt" });
+  expect(r.json).toEqual({
+    id: "sidecar:Heat.en.srt", label: "English", lang: "en", url: `/api/items/${id}/subtitles/sidecar/Heat.en.srt`, format: "srt",
+  });
   expect(readFileSync(video.replace(".mkv", ".en.srt"), "utf8")).toBe(SRT);
   const list = await request(app, `/api/items/${id}/subtitles`);
-  expect(list.json.tracks.map((t: any) => t.id)).toEqual(["sidecar:0", "sidecar:1"]);
+  expect(list.json.tracks.map((t: any) => t.id)).toEqual(["sidecar:Heat.en.srt", "sidecar:Heat.vtt"]);
   expect(
     (await request(app, `/api/items/${id}/subtitles/download`, { method: "POST", body: JSON.stringify({ fileId: "7" }) })).status,
   ).toBe(400);
