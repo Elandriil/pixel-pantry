@@ -140,6 +140,10 @@ export class Repo {
       episodeGet: p("SELECT * FROM items WHERE show_id = ? AND season_number = ? AND episode_number = ?"),
       movieByKey: p("SELECT * FROM items WHERE type = 'movie' AND parsed_key = ?"),
       itemGet: p("SELECT * FROM items WHERE id = ?"),
+      episodeMove: p(
+        `UPDATE items SET season_number = ?, episode_number = ?, episode_end = ?, title = ?, tmdb_id = NULL, overview = NULL,
+         still_path = NULL, air_date = NULL, runtime = NULL, match_error = NULL, match_attempted_at = NULL WHERE id = ?`,
+      ),
       itemMatchError: p("UPDATE items SET match_error = ?, match_attempted_at = ? WHERE id = ?"),
       itemDeleted: p("UPDATE items SET deleted_at = ? WHERE id = ?"),
       episodeList: p(
@@ -303,6 +307,11 @@ export class Repo {
 
   updateItemMeta(id: number, meta: ItemMeta): void {
     this.updatePartial("items", id, ITEM_META, meta);
+  }
+
+  /** Re-numbers an episode in place (keeping its id) and clears its per-episode TMDB metadata. */
+  moveEpisode(id: number, season: number, episode: number, episodeEnd: number | null, title: string): void {
+    this.q.episodeMove!.run(season, episode, episodeEnd, title, id);
   }
 
   setItemMatchError(id: number, err: string | null, at: number | null): void {

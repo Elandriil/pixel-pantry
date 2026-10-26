@@ -183,3 +183,19 @@ test("settings, overrides and cache", () => {
   expect(repo.cacheGet("c", 60_000)).toBe('{"a":1}');
   expect(repo.cacheGet("c", -1)).toBeNull();
 });
+
+test("setItemMatchError and moveEpisode keep the item id and reset episode meta", () => {
+  const repo = setup();
+  const show = repo.insertShow({ category: "anime", parsed_key: "k", parsed_title: "k", title: "K" }, 1);
+  const ep = repo.insertItem({ type: "episode", category: "anime", show_id: show, season_number: 1, episode_number: 13, parsed_title: "k", title: "Episode 13" }, 1);
+  repo.updateItemMeta(ep, { overview: "old", runtime: 24 });
+  repo.setItemMatchError(ep, "Not on TMDB", 50);
+  expect([repo.getItem(ep)!.match_error, repo.getItem(ep)!.match_attempted_at]).toEqual(["Not on TMDB", 50]);
+
+  repo.moveEpisode(ep, 2, 1, 2, "Episode 1");
+  const moved = repo.getItem(ep)!;
+  expect([moved.season_number, moved.episode_number, moved.episode_end, moved.title]).toEqual([2, 1, 2, "Episode 1"]);
+  expect([moved.overview, moved.runtime, moved.tmdb_id, moved.match_error, moved.match_attempted_at]).toEqual([null, null, null, null, null]);
+  expect(repo.getEpisode(show, 2, 1)!.id).toBe(ep);
+  expect(repo.getEpisode(show, 1, 13)).toBeNull();
+});

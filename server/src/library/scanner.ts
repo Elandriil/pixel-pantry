@@ -202,20 +202,32 @@ export class Scanner {
             .listSeasons(showId)
             .filter((s) => s.number > 0)
             .map((s) => s.episode_count ?? 0);
-    const seasonsNeedingMeta = new Set<number>();
+    const itemsBySeason = new Map<number, Set<number>>();
     for (const { file, parsed } of files) {
       const item = this.attachEpisode(show, file, parsed, counts);
-      if (item.tmdb_id === null && item.season_number !== null) seasonsNeedingMeta.add(item.season_number);
+      const season = item.season_number ?? 1;
+      if (!itemsBySeason.has(season)) itemsBySeason.set(season, new Set());
+      itemsBySeason.get(season)!.add(item.id);
     }
-    if (show.tmdb_id !== null) {
-      for (const season of seasonsNeedingMeta) await this.fetchSeasonMeta(show, show.tmdb_id, season);
+    if (show.tmdb_id === null) return;
+    for (const [season, ids] of itemsBySeason) {
+      // the 24 h retry rule applies per episode, so episodes TMDB does not list don't refetch every scan
+      if (![...ids].some((id) => this.shouldMatch(repo.getItem(id)!))) continue;
+      await this.fetchSeasonMeta(show, show.tmdb_id, season, ids);
     }
+  }
+
+  /** Only overrides of the right kind apply: a movie override never feeds tvDetails and vice versa. */
+  private overrideId(key: string, kind: "movie" | "show"): number | null {
+    const o = this.deps.repo.getOverride(key);
+    if (!o) return null;
+    return (o.item_type === "movie") === (kind === "movie") ? o.tmdb_id : null;
   }
 
   private async matchShow(show: ShowRow): Promise<void> {
     const { repo, tmdb, log } = this.deps;
     try {
-      let tmdbId = repo.getOverride(show.parsed_key)?.tmdb_id ?? null;
+      let tmdbId = this.overrideId(show.parsed_key, "show");
       if (tmdbId === null) {
         const results = await tmdb.searchTv(show.parsed_title, show.year);
         tmdbId = pickMatch(results, show.parsed_title, show.year)?.id ?? null;
@@ -265,6 +277,14 @@ export class Scanner {
     const end = eps.length > 1 ? episode + (eps[eps.length - 1]! - eps[0]!) : null;
     let item = repo.getEpisode(show.id, season, episode);
     if (!item) {
+      const fallback = this.fallbackItemFor(show, file, parsed);
+      if (fallback) {
+        // the show matched after this file got a (1, abs) item: renumber it so its id (and progress) survive
+        repo.moveEpisode(fallback.id, season, episode, end, `Episode ${episode}`);
+        item = repo.getItem(fallback.id)!;
+      }
+    }
+    if (!item) {
       const id = repo.insertItem(
         {
           type: "episode",
@@ -286,8 +306,19 @@ export class Scanner {
     return item;
   }
 
-  private async fetchSeasonMeta(show: ShowRow, tmdbId: number, season: number): Promise<void> {
+  /** The file's current item when it is an absolute-number fallback item, (1, abs), used by this file alone. */
+  private fallbackItemFor(show: ShowRow, file: FileRow, parsed: ParsedVideo): ItemRow | null {
+    const { repo } = this.deps;
+    if (!parsed.absolute || file.item_id === null) return null;
+    const cur = repo.getItem(file.item_id);
+    if (!cur || cur.show_id !== show.id || cur.season_number !== 1 || cur.episode_number !== parsed.episodes[0]) return null;
+    const others = repo.filesForItem(cur.id).filter((f) => f.deleted_at === null && f.id !== file.id);
+    return others.length === 0 ? cur : null;
+  }
+
+  private async fetchSeasonMeta(show: ShowRow, tmdbId: number, season: number, itemIds: Set<number>): Promise<void> {
     const { repo, tmdb, log } = this.deps;
+    let missing = "Not on TMDB";
     try {
       const s = await tmdb.tvSeason(tmdbId, season);
       for (const ep of s.episodes) {
@@ -303,7 +334,11 @@ export class Scanner {
         });
       }
     } catch (err) {
-      log.warn("tmdb season fetch failed", { key: show.parsed_key, season, error: message(err) });
+      missing = message(err);
+      log.warn("tmdb season fetch failed", { key: show.parsed_key, season, error: missing });
+    }
+    for (const id of itemIds) {
+      if (repo.getItem(id)!.tmdb_id === null) repo.setItemMatchError(id, missing, this.now());
     }
   }
 
@@ -328,7 +363,7 @@ export class Scanner {
   private async matchMovie(item: ItemRow, key: string): Promise<void> {
     const { repo, tmdb, log } = this.deps;
     try {
-      let tmdbId = repo.getOverride(key)?.tmdb_id ?? null;
+      let tmdbId = this.overrideId(key, "movie");
       if (tmdbId === null) {
         const results = await tmdb.searchMovie(item.parsed_title, item.year);
         tmdbId = pickMatch(results, item.parsed_title, item.year)?.id ?? null;

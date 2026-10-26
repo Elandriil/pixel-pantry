@@ -335,3 +335,63 @@ test("missing media folder sets lastError", async () => {
   expect(st.lastError).toBe("Media folder not set");
   expect(st.state).toBe("idle");
 });
+
+test("episodes TMDB does not list do not refetch their season on rescan", async () => {
+  const ctx = setup();
+  ctx.tmdb.tvSearchResults = [{ id: 95396, title: "Severance", year: 2022, popularity: 50 }];
+  ctx.tmdb.tvDetailsById[95396] = tvDetails(95396, "Severance", [[1, 9], [2, 10]]);
+  ctx.tmdb.seasonsByIdAndNumber["95396:2"] = season(2, [1, 2, 3, 4], 1000); // E05 not listed
+  ctx.file("tv/Severance/Season 02/Severance S02E04.mkv");
+  ctx.file("tv/Severance/Season 02/Severance S02E05.mkv");
+  ctx.file("tv/Severance/Season 03/Severance S03E01.mkv"); // season TMDB lacks: 404
+  await ctx.scanner.scan();
+  expect(ctx.tmdb.calls.tvSeason).toBe(2);
+  const show = ctx.repo.getShowByKey("tv:severance:")!;
+  const e5 = ctx.repo.getEpisode(show.id, 2, 5)!;
+  expect(e5.tmdb_id).toBeNull();
+  expect(e5.match_error).toBe("Not on TMDB");
+  expect(ctx.repo.getEpisode(show.id, 3, 1)!.match_error).toStartWith("TMDB 404");
+  expect(ctx.repo.getEpisode(show.id, 2, 4)!.tmdb_id).toBe(1004);
+
+  ctx.clock.t += 60 * 60 * 1000;
+  await ctx.scanner.scan();
+  expect(ctx.tmdb.calls.tvSeason).toBe(2);
+
+  ctx.clock.t += DAY;
+  await ctx.scanner.scan();
+  expect(ctx.tmdb.calls.tvSeason).toBe(4);
+});
+
+test("anime item keeps its id when the show matches later", async () => {
+  const ctx = setup();
+  ctx.tmdb.tvSearchResults = [];
+  const rel = ctx.file("anime/Frieren/Frieren - 13.mkv");
+  await ctx.scanner.scan();
+  const show = ctx.repo.getShowByKey("anime:frieren:")!;
+  const before = ctx.repo.getEpisode(show.id, 1, 13)!;
+
+  ctx.tmdb.tvSearchResults = [{ id: 209867, title: "Frieren", year: 2023, popularity: 30 }];
+  ctx.tmdb.tvDetailsById[209867] = tvDetails(209867, "Frieren", [[1, 12], [2, 16]]);
+  ctx.tmdb.seasonsByIdAndNumber["209867:2"] = season(2, [1, 2], 5000);
+  ctx.clock.t += DAY;
+  await ctx.scanner.scan();
+
+  expect(ctx.probe.calls.length).toBe(1);
+  const after = ctx.repo.getItem(before.id)!;
+  expect([after.season_number, after.episode_number]).toEqual([2, 1]);
+  expect(after.deleted_at).toBeNull();
+  expect(after.tmdb_id).toBe(5001);
+  expect(after.title).toBe("Ep title 1");
+  expect(ctx.repo.getEpisode(show.id, 1, 13)).toBeNull();
+  expect(ctx.repo.listEpisodes(show.id, { includeDeleted: true }).map((e) => e.id)).toEqual([before.id]);
+  expect(ctx.repo.getFileByPath(rel)!.item_id).toBe(before.id);
+});
+
+test("override of the wrong kind is ignored", async () => {
+  const ctx = setup();
+  severance(ctx);
+  ctx.repo.setOverride("tv:severance:", "movie", 949);
+  await ctx.scanner.scan();
+  expect(ctx.tmdb.calls.searchTv).toBe(1);
+  expect(ctx.repo.getShowByKey("tv:severance:")!.tmdb_id).toBe(95396);
+});
