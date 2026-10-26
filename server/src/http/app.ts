@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Deps } from "./deps";
 import { HttpError } from "./errors";
+import { adminRoutes } from "./routes/admin";
 import { catalogRoutes } from "./routes/catalog";
 import { playbackRoutes } from "./routes/playback";
 import { scanRoutes } from "./routes/scan";
@@ -9,10 +10,7 @@ import { subtitleRoutes } from "./routes/subtitles";
 
 export { HttpError };
 
-/**
- * Route modules mounted under `/api`. Later tasks add theirs here:
- * Task 14 admin.
- */
+/** Route modules mounted under `/api`. */
 const registerRoutes: ((deps: Deps) => Hono)[] = [catalogRoutes, streamRoutes, playbackRoutes, subtitleRoutes, scanRoutes];
 
 export function buildApp(deps: Deps): Hono {
@@ -25,6 +23,8 @@ export function buildApp(deps: Deps): Hono {
   });
 
   for (const routes of registerRoutes) app.route("/api", routes(deps));
+  // `/` and `/admin/*`, loopback only
+  app.route("/", adminRoutes(deps));
 
   app.notFound((c) => c.json({ error: "Not found" }, 404));
   app.onError((err, c) => {

@@ -81,8 +81,9 @@ export async function request(
   app: Hono,
   path: string,
   init?: RequestInit,
+  env?: Record<string, unknown>,
 ): Promise<{ status: number; json: any; headers: Headers }> {
-  const res = await app.request(path, init);
+  const res = await app.request(path, init, env);
   const text = await res.text();
   let json: any = null;
   try {

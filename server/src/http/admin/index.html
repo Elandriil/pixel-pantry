@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel Pantry</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #121417; color: #e4e6ea; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  header h1 { flex: 1; margin: 0; font-size: 22px; }
+  section { background: #1b1e23; border: 1px solid #2a2e35; border-radius: 8px; padding: 12px 16px; margin-top: 16px; }
+  h2 { margin: 0 0 8px; font-size: 16px; }
+  button { background: #2f6fde; color: #fff; border: 0; border-radius: 4px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  button.secondary { background: #3a3f47; }
+  button.danger { background: #b3393b; }
+  button:disabled { opacity: .5; cursor: default; }
+  input { background: #121417; color: inherit; border: 1px solid #3a3f47; border-radius: 4px; padding: 5px 8px; font: inherit; }
+  label { display: grid; grid-template-columns: 180px 1fr; align-items: center; gap: 8px; margin: 6px 0; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #3a3f47; }
+  .badge.on { background: #24713c; }
+  .error { color: #ff6b6b; }
+  .note { color: #f0b95a; }
+  .muted { color: #8b919a; }
+  .row { border-top: 1px solid #2a2e35; padding: 8px 0; }
+  .row:first-child { border-top: 0; }
+  .search { display: flex; gap: 6px; margin-top: 4px; }
+  .search input { flex: 1; }
+  ul.results { list-style: none; padding: 0; margin: 4px 0 0; }
+  ul.results li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 0; }
+  pre { background: #0c0d0f; padding: 8px; border-radius: 4px; max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 0; font-size: 12px; }
+  dl { display: grid; grid-template-columns: 180px 1fr; gap: 4px 8px; margin: 0; }
+  dt { color: #8b919a; }
+  dd { margin: 0; word-break: break-all; }
+  @media (max-width: 600px) { label, dl { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Pixel Pantry</h1>
+    <button id="rescan">Rescan now</button>
+    <button id="quit" class="danger">Quit server</button>
+  </header>
+
+  <section id="status">
+    <h2>Status</h2>
+    <dl>
+      <dt>Open on TV</dt><dd id="st-urls"></dd>
+      <dt>Media folder</dt><dd id="st-root"></dd>
+      <dt>Last scan</dt><dd id="st-last"></dd>
+      <dt>Scan</dt><dd id="st-scan"></dd>
+      <dt>Library</dt><dd id="st-counts"></dd>
+      <dt>Services</dt><dd><span id="st-tmdb" class="badge">TMDB</span> <span id="st-os" class="badge">OpenSubtitles</span></dd>
+    </dl>
+    <p id="st-error" class="error" hidden></p>
+  </section>
+
+  <section id="settings">
+    <h2>Settings</h2>
+    <form id="settings-form">
+      <label>Media folder <input name="mediaRoot" placeholder="D:\Media"></label>
+      <label>Port <input name="port" type="number" min="1" max="65535"></label>
+      <label>TMDB API key <input name="tmdbApiKey" type="password" autocomplete="off"></label>
+      <label>OpenSubtitles API key <input name="osApiKey" type="password" autocomplete="off"></label>
+      <label>OpenSubtitles username <input name="osUsername" autocomplete="off"></label>
+      <label>OpenSubtitles password <input name="osPassword" type="password" autocomplete="off"></label>
+      <button type="submit">Save</button>
+      <span id="settings-msg" class="muted"></span>
+      <p id="restart-note" class="note" hidden>Restart required to apply the new port.</p>
+    </form>
+  </section>
+
+  <section id="unmatched">
+    <h2>Unmatched</h2>
+    <div id="unmatched-list" class="muted">Loading…</div>
+  </section>
+
+  <section id="log">
+    <h2>Log</h2>
+    <pre id="log-pre"></pre>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+async function api(path, opts = {}) {
+  const init = { ...opts };
+  if (init.body !== undefined) {
+    init.headers = { "Content-Type": "application/json" };
+    init.body = JSON.stringify(init.body);
+  }
+  const res = await fetch("/admin/api/" + path, init);
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error((data && data.error) || "HTTP " + res.status);
+  return data;
+}
+
+function el(tag, props = {}, children = []) {
+  const e = document.createElement(tag);
+  Object.assign(e, props);
+  for (const c of children) e.append(c);
+  return e;
+}
+
+// status
+
+let statusTimer = null;
+let wasScanning = false;
+
+async function refreshStatus() {
+  clearTimeout(statusTimer);
+  let scanning = false;
+  try {
+    const s = await api("status");
+    scanning = s.scan.state === "scanning";
+    const urls = s.lanAddresses.map((ip) => "http://" + ip + ":" + s.port);
+    $("st-urls").textContent = urls.length ? urls.join("  ") : "No network address found";
+    $("st-root").textContent = s.mediaRoot || "Not set";
+    $("st-last").textContent = s.scan.finishedAt ? new Date(s.scan.finishedAt).toLocaleString() : "Never";
+    $("st-scan").textContent = scanning
+      ? "Scanning (" + s.scan.phase + "): " + s.scan.filesProcessed + " / " + s.scan.filesSeen + " files"
+      : "Idle";
+    $("st-counts").textContent = s.counts.tv + " TV shows, " + s.counts.anime + " anime, " + s.counts.movies + " movies";
+    $("st-tmdb").className = "badge" + (s.tmdbConfigured ? " on" : "");
+    $("st-tmdb").textContent = "TMDB " + (s.tmdbConfigured ? "configured" : "not configured");
+    $("st-os").className = "badge" + (s.opensubtitlesConfigured ? " on" : "");
+    $("st-os").textContent = "OpenSubtitles " + (s.opensubtitlesConfigured ? "configured" : "not configured");
+    $("st-error").hidden = !s.lastScanError;
+    $("st-error").textContent = s.lastScanError ? "Last scan error: " + s.lastScanError : "";
+    $("rescan").disabled = scanning;
+    if (wasScanning && !scanning) refreshUnmatched();
+    wasScanning = scanning;
+  } catch (err) {
+    $("st-error").hidden = false;
+    $("st-error").textContent = "Cannot reach server: " + err.message;
+  }
+  statusTimer = setTimeout(refreshStatus, scanning ? 3000 : 15000);
+}
+
+// settings
+
+const form = $("settings-form");
+
+async function loadSettings() {
+  const c = await api("config");
+  form.mediaRoot.value = c.mediaRoot;
+  form.port.value = c.port;
+  form.tmdbApiKey.value = c.tmdbApiKey;
+  form.osApiKey.value = c.opensubtitles.apiKey;
+  form.osUsername.value = c.opensubtitles.username;
+  form.osPassword.value = c.opensubtitles.password;
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("settings-msg").textContent = "Saving…";
+  try {
+    const r = await api("config", {
+      method: "PUT",
+      body: {
+        mediaRoot: form.mediaRoot.value,
+        port: Number(form.port.value),
+        tmdbApiKey: form.tmdbApiKey.value,
+        opensubtitles: {
+          apiKey: form.osApiKey.value,
+          username: form.osUsername.value,
+          password: form.osPassword.value,
+        },
+      },
+    });
+    $("settings-msg").textContent = "Saved.";
+    if (r.restartRequired) $("restart-note").hidden = false;
+    await loadSettings();
+    refreshStatus();
+  } catch (err) {
+    $("settings-msg").textContent = "Save failed: " + err.message;
+  }
+});
+
+// unmatched
+
+function unmatchedRow(entity, type) {
+  const results = el("ul", { className: "results" });
+  const input = el("input", { value: entity.parsedTitle });
+  const button = el("button", { type: "button", textContent: "Search", className: "secondary" });
+  const search = async () => {
+    results.replaceChildren(el("li", { className: "muted", textContent: "Searching…" }));
+    try {
+      const q = new URLSearchParams({ type: type === "show" ? "tv" : "movie", q: input.value });
+      const list = await api("tmdb/search?" + q);
+      if (!list.length) results.replaceChildren(el("li", { className: "muted", textContent: "No results" }));
+      else results.replaceChildren(...list.map((r) => resultRow(r, entity, type)));
+    } catch (err) {
+      results.replaceChildren(el("li", { className: "error", textContent: err.message }));
+    }
+  };
+  button.addEventListener("click", search);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
+  const meta = [entity.year, entity.category, type === "show" ? entity.fileCount + " files" : null]
+    .filter((x) => x !== null && x !== undefined).join(" · ");
+  return el("div", { className: "row" }, [
+    el("div", {}, [el("strong", { textContent: entity.parsedTitle }), " ", el("span", { className: "muted", textContent: meta })]),
+    entity.error ? el("div", { className: "error", textContent: entity.error }) : "",
+    el("div", { className: "search" }, [input, button]),
+    results,
+  ]);
+}
+
+function resultRow(r, entity, type) {
+  const use = el("button", { type: "button", textContent: "Use this" });
+  use.addEventListener("click", async () => {
+    use.disabled = true;
+    try {
+      await api("match", { method: "POST", body: { type, id: entity.id, tmdbId: r.id } });
+      refreshStatus();
+      refreshUnmatched();
+    } catch (err) {
+      use.disabled = false;
+      alert("Match failed: " + err.message);
+    }
+  });
+  return el("li", {}, [el("span", { textContent: r.title + (r.year ? " (" + r.year + ")" : "") + " · TMDB " + r.id }), use]);
+}
+
+async function refreshUnmatched() {
+  const box = $("unmatched-list");
+  try {
+    const u = await api("unmatched");
+    const rows = [...u.shows.map((s) => unmatchedRow(s, "show")), ...u.movies.map((m) => unmatchedRow(m, "movie"))];
+    box.className = rows.length ? "" : "muted";
+    box.replaceChildren(...(rows.length ? rows : ["Everything is matched."]));
+  } catch (err) {
+    box.className = "error";
+    box.textContent = err.message;
+  }
+}
+
+// log
+
+async function refreshLog() {
+  const pre = $("log-pre");
+  try {
+    const { lines } = await api("log?n=200");
+    const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
+    pre.textContent = lines.join("\n");
+    if (atBottom) pre.scrollTop = pre.scrollHeight;
+  } catch {}
+}
+
+// buttons
+
+$("rescan").addEventListener("click", async () => {
+  $("rescan").disabled = true;
+  try { await api("scan", { method: "POST" }); } catch (err) { alert("Rescan failed: " + err.message); }
+  refreshStatus();
+});
+
+$("quit").addEventListener("click", async () => {
+  if (!confirm("Quit the Pixel Pantry server? The TV app will stop working until it is started again.")) return;
+  try {
+    await api("quit", { method: "POST" });
+    document.body.replaceChildren(el("main", {}, [el("h1", { textContent: "Pixel Pantry has stopped." })]));
+  } catch (err) {
+    alert("Quit failed: " + err.message);
+  }
+});
+
+refreshStatus();
+loadSettings().catch((err) => { $("settings-msg").textContent = "Could not load settings: " + err.message; });
+refreshUnmatched();
+refreshLog();
+setInterval(refreshLog, 5000);
+</script>
+</body>
+</html>

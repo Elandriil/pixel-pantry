@@ -147,6 +147,18 @@ export class Repo {
       ),
       itemMatchError: p("UPDATE items SET match_error = ?, match_attempted_at = ? WHERE id = ?"),
       itemDeleted: p("UPDATE items SET deleted_at = ? WHERE id = ?"),
+      episodesResetMatch: p(
+        "UPDATE items SET tmdb_id = NULL, match_attempted_at = NULL, match_error = NULL WHERE show_id = ?",
+      ),
+      unmatchedShows: p(
+        `SELECT s.*, (SELECT COUNT(*) FROM files f JOIN items i ON i.id = f.item_id
+           WHERE i.show_id = s.id AND f.deleted_at IS NULL AND i.deleted_at IS NULL) AS file_count
+         FROM shows s WHERE s.tmdb_id IS NULL AND s.deleted_at IS NULL ORDER BY s.parsed_title COLLATE NOCASE`,
+      ),
+      unmatchedMovies: p(
+        `SELECT * FROM items WHERE type = 'movie' AND tmdb_id IS NULL AND deleted_at IS NULL
+         ORDER BY parsed_title COLLATE NOCASE`,
+      ),
       episodeList: p(
         "SELECT * FROM items WHERE show_id = ? AND deleted_at IS NULL ORDER BY season_number, episode_number",
       ),
@@ -330,6 +342,21 @@ export class Repo {
   listEpisodes(showId: number, opts: { includeDeleted?: boolean } = {}): ItemRow[] {
     const q = opts.includeDeleted ? this.q.episodeListAll! : this.q.episodeList!;
     return q.all(showId) as ItemRow[];
+  }
+
+  /** Clears the TMDB match state of every episode of a show so a rematch refetches season metadata. */
+  resetShowEpisodesMatch(showId: number): void {
+    this.q.episodesResetMatch!.run(showId);
+  }
+
+  /** Live shows without a TMDB id, each with its live file count. */
+  listUnmatchedShows(): (ShowRow & { file_count: number })[] {
+    return this.q.unmatchedShows!.all() as (ShowRow & { file_count: number })[];
+  }
+
+  /** Live movies without a TMDB id. */
+  listUnmatchedMovies(): ItemRow[] {
+    return this.q.unmatchedMovies!.all() as ItemRow[];
   }
 
   listMovies(category: string): ItemRow[] {
