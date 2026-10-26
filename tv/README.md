@@ -74,15 +74,16 @@ adb exec-out screencap -p > shot.png
    fails and only toasts "Could not refresh"; a page (or the player) that has nothing loaded yet shows "Cannot
    reach the server" with Retry / Change server.
 
-### First-run checklist on the TV (not covered by the emulator)
+### Real-TV checklist (verify on the Bravia, in this order)
 
-- [ ] **CH+ / CH−** on the Bravia remote switch to the next / previous episode (toast names the episode).
-- [ ] **Hold-to-repeat skip**: holding LEFT / RIGHT keeps skipping by the configured amounts.
-- [ ] **Long-press OK** (and the remote's menu key, if any) opens the episode menu on the show page.
-- [ ] **Subtitles with a real MKV's embedded tracks**: default / forced flags pick the right track with no stored
-      choice; a chosen track is restored on the next play; sidecar `.srt` and sub delay still work.
-- [ ] **mDNS on the home network**: a fresh install (or "Use automatic discovery" in Settings) finds the PC's
-      server without typing an address.
-- [ ] **TMDB key on the server** (admin page) so posters, backdrops and stills load; without it cards show the
-      title on a plain card, which is expected.
-- [ ] Unplug / sleep the PC while browsing: the page shows "Cannot reach the server" with the address and Retry.
+1. Long-press OK on an episode card: the menu opens and nothing runs on release; the episode's progress is unchanged afterwards.
+2. Remote keys reach the app: CH+ / CH− switch episodes (Sony firmware may route them to the tuner); ⏮ ⏭, ⏪ ⏩, ■, and separate ▶ / ‖ versus ⏯ all do what the player overlay says.
+3. Audio: a remux whose default track is DTS, plus DTS-only, TrueHD, EAC3 and AC3 files, on the TV speakers and over ARC/eARC. Expect no error screen and no silent video.
+4. 4K HEVC and high-bitrate remux direct play: start, seek, hold LEFT/RIGHT (repeat rate and skip accumulation), no out-of-memory crash, no stutter.
+5. Press HOME mid-playback, open YouTube or Netflix and play there, come back: the other app plays, Pixel Pantry resumes with OK, no "unsupported format" error. Also: screen saver while paused, and TV standby via HDMI-CEC.
+6. Process death: after using other heavy apps, relaunch from the launcher; the restored screen loads with the right server address.
+7. MKV embedded subtitles: default and forced flags, the choice restored on the next play, the correct track when there are several English tracks; sidecar `.srt` (including cp1252), sub delay, OpenSubtitles download and switching while playing.
+8. Server going away mid-playback (PC sleep): the error with the file name appears within about 10–15 s; Back works.
+9. mDNS discovery on the home network; a DHCP address change; Retry recovers.
+10. OK to pause, then RIGHT, then OK: RIGHT skips and OK resumes (it must not switch episodes).
+11. Rescan from the sidebar, then the auto-refresh toast; posters appear once the TMDB key is set on the server.
