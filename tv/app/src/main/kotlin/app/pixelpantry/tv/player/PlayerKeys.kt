@@ -5,6 +5,7 @@ enum class KeyCode {
     DPAD_CENTER, ENTER, MEDIA_PLAY_PAUSE, MEDIA_PLAY, MEDIA_PAUSE,
     DPAD_LEFT, DPAD_RIGHT, DPAD_UP, DPAD_DOWN,
     CHANNEL_UP, CHANNEL_DOWN, MEDIA_NEXT, MEDIA_PREVIOUS,
+    MEDIA_FAST_FORWARD, MEDIA_REWIND, MEDIA_STOP,
     BACK, MENU, OTHER,
 }
 
@@ -95,6 +96,10 @@ object PlayerKeys {
             KeyCode.MEDIA_PLAY_PAUSE -> PlayerAction.TogglePause
             KeyCode.MEDIA_PLAY -> PlayerAction.Play
             KeyCode.MEDIA_PAUSE -> PlayerAction.Pause
+            // The remote's own ⏩ / ⏪ / ⏹ keys act wherever focus is.
+            KeyCode.MEDIA_FAST_FORWARD -> PlayerAction.SkipForward
+            KeyCode.MEDIA_REWIND -> PlayerAction.SkipBack
+            KeyCode.MEDIA_STOP -> PlayerAction.StopAndExit
             KeyCode.BACK -> when {
                 overlayVisible -> PlayerAction.HideOverlay
                 else -> PlayerAction.StopAndExit

@@ -164,6 +164,9 @@ private fun KeyEvent.toKeyEventLike(): KeyEventLike = KeyEventLike(
         Key.ChannelDown -> KeyCode.CHANNEL_DOWN
         Key.MediaNext -> KeyCode.MEDIA_NEXT
         Key.MediaPrevious -> KeyCode.MEDIA_PREVIOUS
+        Key.MediaFastForward -> KeyCode.MEDIA_FAST_FORWARD
+        Key.MediaRewind -> KeyCode.MEDIA_REWIND
+        Key.MediaStop -> KeyCode.MEDIA_STOP
         Key.Back -> KeyCode.BACK
         Key.Menu -> KeyCode.MENU
         else -> KeyCode.OTHER

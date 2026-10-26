@@ -251,4 +251,27 @@ class PlayerKeysTest {
         // DOWN moves focus to the buttons row.
         assertEquals(PlayerAction.PassThrough, visible(down(DPAD_DOWN)))
     }
+
+    // ⏩ / ⏪ / ⏹ (minor)
+
+    @Test fun fastForwardAndRewindSkipInEveryState() {
+        val states: List<(KeyEventLike) -> PlayerAction?> = listOf(
+            { hidden(it) }, { onSeekBar(it) }, { onButton(it) }, { hidden(it, countdown = true) },
+        )
+        for (inState in states) {
+            assertEquals(PlayerAction.SkipForward, inState(down(KeyCode.MEDIA_FAST_FORWARD)))
+            assertEquals(PlayerAction.SkipBack, inState(down(KeyCode.MEDIA_REWIND)))
+        }
+    }
+
+    @Test fun heldFastForwardKeepsSkipping() =
+        assertEquals(PlayerAction.SkipForward, onButton(down(KeyCode.MEDIA_FAST_FORWARD, repeat = 3)))
+
+    @Test fun stopKeyStopsAndExitsInEveryState() {
+        assertEquals(PlayerAction.StopAndExit, hidden(down(KeyCode.MEDIA_STOP)))
+        assertEquals(PlayerAction.StopAndExit, onSeekBar(down(KeyCode.MEDIA_STOP)))
+        assertEquals(PlayerAction.StopAndExit, onButton(down(KeyCode.MEDIA_STOP)))
+        assertEquals(PlayerAction.StopAndExit, hidden(down(KeyCode.MEDIA_STOP), countdown = true))
+        assertNull("acts once", hidden(down(KeyCode.MEDIA_STOP, repeat = 1)))
+    }
 }
