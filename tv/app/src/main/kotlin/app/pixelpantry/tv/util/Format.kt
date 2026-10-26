@@ -43,3 +43,12 @@ fun formatClock(seconds: Double): String {
     val s = total % 60
     return if (h > 0) String.format(Locale.ROOT, "%d:%02d:%02d", h, m, s) else String.format(Locale.ROOT, "%d:%02d", m, s)
 }
+
+/** Watch time of a history session: `"32 min watched"`, or `"< 1 min watched"` under a minute. */
+fun formatWatched(seconds: Double): String {
+    if (seconds < 60.0) return "< 1 min watched"
+    return "${(seconds / 60.0).toInt()} min watched"
+}
+
+/** Hours with one decimal: `"2.5"`, `"0.4"`, `"12.0"`. */
+fun formatHours(hours: Double): String = String.format(Locale.ROOT, "%.1f", hours.coerceAtLeast(0.0))

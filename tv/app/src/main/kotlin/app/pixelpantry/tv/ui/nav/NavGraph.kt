@@ -8,7 +8,6 @@ import androidx.compose.runtime.remember
 import androidx.lifecycle.Lifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavController
@@ -17,7 +16,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import app.pixelpantry.tv.R
+import app.pixelpantry.tv.BuildConfig
 import app.pixelpantry.tv.di.AppContainer
 import app.pixelpantry.tv.player.ExoPlayerPort
 import app.pixelpantry.tv.player.PlayerScreen
@@ -28,8 +27,14 @@ import app.pixelpantry.tv.ui.components.SidebarEntry
 import app.pixelpantry.tv.ui.components.ToastHost
 import app.pixelpantry.tv.ui.connect.ConnectScreen
 import app.pixelpantry.tv.ui.connect.ConnectViewModel
+import app.pixelpantry.tv.ui.history.HistoryScreen
+import app.pixelpantry.tv.ui.history.HistoryViewModel
 import app.pixelpantry.tv.ui.home.HomeScreen
 import app.pixelpantry.tv.ui.home.HomeViewModel
+import app.pixelpantry.tv.ui.search.SearchScreen
+import app.pixelpantry.tv.ui.search.SearchViewModel
+import app.pixelpantry.tv.ui.settings.SettingsScreen
+import app.pixelpantry.tv.ui.settings.SettingsViewModel
 import app.pixelpantry.tv.ui.show.ShowScreen
 import app.pixelpantry.tv.ui.show.ShowViewModel
 
@@ -158,14 +163,22 @@ fun NavGraph(container: AppContainer) {
                         HomeScreen(vm, onNavigate = { event -> open(backStack, event) })
                     }
                 }
-                composable(Routes.SEARCH) {
-                    Shell(SidebarEntry.SEARCH) { PlaceholderScreen(stringResource(R.string.nav_search)) }
+                composable(Routes.SEARCH) { backStack ->
+                    val vm: SearchViewModel = viewModel(factory = SearchViewModel.Factory(container.api))
+                    Shell(SidebarEntry.SEARCH) { SearchScreen(vm, onNavigate = { event -> open(backStack, event) }) }
                 }
-                composable(Routes.HISTORY) {
-                    Shell(SidebarEntry.HISTORY) { PlaceholderScreen(stringResource(R.string.nav_history)) }
+                composable(Routes.HISTORY) { backStack ->
+                    val vm: HistoryViewModel = viewModel(factory = HistoryViewModel.Factory(container.api, container.historyStrings))
+                    Shell(SidebarEntry.HISTORY) { HistoryScreen(vm, onNavigate = { event -> open(backStack, event) }) }
                 }
                 composable(Routes.SETTINGS) {
-                    Shell(SidebarEntry.SETTINGS) { PlaceholderScreen(stringResource(R.string.nav_settings)) }
+                    val vm: SettingsViewModel = viewModel(
+                        factory = SettingsViewModel.Factory(
+                            container.settingsRepo, container.serverStore, container.resolver, container.api,
+                            container.toaster, container.settingsStrings, BuildConfig.VERSION_NAME,
+                        ),
+                    )
+                    Shell(SidebarEntry.SETTINGS) { SettingsScreen(vm) }
                 }
                 composable(Routes.SHOW, arguments = listOf(navArgument("id") { type = NavType.IntType })) {
                     DetailPage(it, showId = it.arguments?.getInt("id") ?: 0, movieItemId = null)

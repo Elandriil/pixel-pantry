@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.pixelpantry.tv.api.ApiClient
+import app.pixelpantry.tv.server.ServerAddress
 import app.pixelpantry.tv.server.ServerLocator
 import app.pixelpantry.tv.server.ServerResolver
 import app.pixelpantry.tv.server.ServerStore
@@ -74,7 +75,7 @@ class ConnectViewModel(
     fun submitManual() {
         val address = draft
         val trimmed = address.trim()
-        if (!isValidAddress(trimmed)) {
+        if (!ServerAddress.isValid(trimmed)) {
             _state.value = UiState.Failed(lastTried, manualDraft = address, error = ConnectError.InvalidAddress)
             return
         }
@@ -104,17 +105,5 @@ class ConnectViewModel(
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = ConnectViewModel(locator, api, store) as T
-    }
-
-    companion object {
-        /** `host:port` with a non-empty host, no scheme or path, and a port in 1..65535. */
-        fun isValidAddress(address: String): Boolean {
-            val colon = address.lastIndexOf(':')
-            if (colon <= 0) return false
-            val host = address.substring(0, colon)
-            val port = address.substring(colon + 1).toIntOrNull() ?: return false
-            if (port !in 1..65535) return false
-            return host.none { it.isWhitespace() || it == '/' || it == ':' || it == '@' }
-        }
     }
 }

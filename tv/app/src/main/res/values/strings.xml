@@ -118,6 +118,46 @@
     <string name="player_error_format">This TV cannot play this video\'s format</string>
     <string name="player_error_other">%1$s (%2$s)</string>
 
+    <!-- Search -->
+    <string name="search_label">Search</string>
+    <string name="search_hint">Show or movie title</string>
+    <string name="search_shows">Shows</string>
+    <string name="search_movies">Movies</string>
+    <string name="search_no_results">No results</string>
+    <string name="search_failed">Search failed: %1$s</string>
+
+    <!-- History -->
+    <string name="history_today">Today</string>
+    <string name="history_yesterday">Yesterday</string>
+    <string name="history_empty">Nothing watched yet.</string>
+    <string name="history_error_title">Could not load history</string>
+    <string name="history_hours_week">Hours this week</string>
+    <string name="history_hours_month">Hours this month</string>
+    <string name="history_hours_all">Hours all time</string>
+    <string name="history_episodes">Episodes</string>
+    <string name="history_movies">Movies</string>
+    <string name="history_top_show">Top show this month</string>
+    <string name="history_top_show_value">%1$s · %2$s h</string>
+    <string name="history_none">—</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_skip_back">Skip back</string>
+    <string name="settings_skip_forward">Skip forward</string>
+    <string name="settings_seconds">%1$d s</string>
+    <string name="settings_autoplay">Auto-play next episode</string>
+    <string name="settings_on">On</string>
+    <string name="settings_off">Off</string>
+    <string name="settings_server">Server address</string>
+    <string name="settings_server_manual">Set manually</string>
+    <string name="settings_server_auto">Found automatically</string>
+    <string name="settings_change">Change…</string>
+    <string name="settings_use_discovery">Use automatic discovery</string>
+    <string name="settings_version">App version</string>
+    <string name="settings_connected">Connected to %1$s</string>
+    <string name="settings_no_server">No server found</string>
+    <string name="settings_save_failed">Could not save the setting: %1$s</string>
+
     <!-- Generic -->
     <string name="loading">Loading…</string>
 </resources>

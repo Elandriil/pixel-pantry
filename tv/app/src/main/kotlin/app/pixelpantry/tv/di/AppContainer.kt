@@ -17,6 +17,8 @@ import app.pixelpantry.tv.server.ServerResolver
 import app.pixelpantry.tv.server.ServerStore
 import app.pixelpantry.tv.settings.SettingsRepo
 import app.pixelpantry.tv.ui.components.Toaster
+import app.pixelpantry.tv.ui.history.HistoryViewModel
+import app.pixelpantry.tv.ui.settings.SettingsViewModel
 import app.pixelpantry.tv.ui.show.ShowViewModel
 import coil.ImageLoader
 import coil.disk.DiskCache
@@ -71,6 +73,18 @@ class AppContainer(private val app: Application) {
             delaySidecarOnly = app.getString(R.string.player_delay_sidecar_only),
             sidecarFailed = app.getString(R.string.player_sidecar_failed),
             saveChoiceFailed = { app.getString(R.string.player_save_choice_failed, it) },
+        )
+    }
+    val historyStrings: HistoryViewModel.Strings by lazy {
+        HistoryViewModel.Strings(today = app.getString(R.string.history_today), yesterday = app.getString(R.string.history_yesterday))
+    }
+    val settingsStrings: SettingsViewModel.Strings by lazy {
+        SettingsViewModel.Strings(
+            connected = { app.getString(R.string.settings_connected, it) },
+            noServerFound = app.getString(R.string.settings_no_server),
+            invalidAddress = app.getString(R.string.connect_error_invalid),
+            unreachable = { app.getString(R.string.connect_error_unreachable, it) },
+            saveFailed = { app.getString(R.string.settings_save_failed, it) },
         )
     }
     val playbackErrorTexts: PlaybackErrorTexts by lazy {

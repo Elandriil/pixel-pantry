@@ -40,4 +40,16 @@ class FormatTest {
         assertEquals("0:00", formatClock(0.0))
         assertEquals("0:09", formatClock(9.7))
     }
+
+    @Test fun watched() {
+        assertEquals("32 min watched", formatWatched(1925.0))
+        assertEquals("1 min watched", formatWatched(60.0))
+        assertEquals("< 1 min watched", formatWatched(59.9))
+    }
+
+    @Test fun hours() {
+        assertEquals("0.4", formatHours(0.3611))
+        assertEquals("2.5", formatHours(2.5))
+        assertEquals("0.0", formatHours(-1.0))
+    }
 }
