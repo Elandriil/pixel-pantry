@@ -4,7 +4,7 @@ import type { Deps } from "../deps";
 export function scanRoutes(deps: Deps): Hono {
   const r = new Hono();
 
-  // scanner.scan() joins a running scan instead of starting a second one.
+  // Mid-scan, scanner.scan() queues at most one rerun instead of starting a parallel scan.
   r.post("/scan", (c) => {
     void deps.scanner.scan();
     return c.json({ status: deps.scanner.status() }, 202);

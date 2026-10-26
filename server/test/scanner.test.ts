@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { rmSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { openDb } from "../src/db/db";
+import type { ProbeResult } from "../src/library/probe";
 import { Repo } from "../src/library/repo";
 import { Scanner } from "../src/library/scanner";
 import { Logger } from "../src/log";
@@ -10,7 +11,7 @@ import { fakeProbe, fakeTmdb, tmpDir, touch } from "./helpers";
 
 const DAY = 24 * 60 * 60 * 1000;
 
-function setup(opts: { root?: string } = {}) {
+function setup(opts: { root?: string; probe?: (absPath: string) => Promise<ProbeResult> } = {}) {
   const root = opts.root ?? tmpDir();
   const repo = new Repo(openDb(":memory:"));
   const tmdb = fakeTmdb();
@@ -19,7 +20,7 @@ function setup(opts: { root?: string } = {}) {
   const scanner = new Scanner({
     repo,
     tmdb,
-    probe: probe.probe,
+    probe: opts.probe ?? probe.probe,
     mediaRoot: () => root,
     log: new Logger(join(tmpDir(), "pantry.log")),
     now: () => clock.t,
@@ -300,7 +301,7 @@ test("movie with override uses override tmdb id", async () => {
   expect(ctx.repo.getFileByPath(rel)!.item_id).toBe(m.id);
 });
 
-test("concurrent scan() calls share one run", async () => {
+test("scan() calls made before the run starts walking share one run", async () => {
   const ctx = setup();
   severance(ctx);
   let finished = 0;
@@ -312,6 +313,37 @@ test("concurrent scan() calls share one run", async () => {
   await Promise.all([p1, p2]);
   expect(ctx.probe.calls.length).toBe(2);
   expect(finished).toBe(1);
+  expect(ctx.scanner.status().state).toBe("idle");
+});
+
+test("scan() called mid-run queues exactly one rerun that sees later changes", async () => {
+  const probed: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const ctx = setup({
+    probe: async (absPath) => {
+      probed.push(absPath);
+      if (probed.length === 1) await gate; // first probe of the first run blocks
+      return { duration: 1200, audio: [], subtitles: [], video: null };
+    },
+  });
+  const [a, b] = severance(ctx);
+  let finished = 0;
+  ctx.scanner.onFinished(() => finished++);
+
+  const p1 = ctx.scanner.scan();
+  while (probed.length === 0) await Bun.sleep(1); // first run is walking/probing
+  const c = ctx.file("tv/Severance/Season 02/Severance S02E06.mkv"); // appears after the first walk
+  let p2Finished = -1;
+  const p2 = ctx.scanner.scan().then((st) => ((p2Finished = finished), st));
+  ctx.scanner.scan(); // a third mid-run call does not queue a second rerun
+  release();
+  await Promise.all([p1, p2]);
+
+  expect(finished).toBe(2);
+  expect(p2Finished).toBe(2);
+  expect(probed.map((p) => p.slice(ctx.root.length + 1))).toEqual([a, b, c]);
+  expect(ctx.repo.getFileByPath(c)?.item_id).not.toBeNull();
   expect(ctx.scanner.status().state).toBe("idle");
 });
 

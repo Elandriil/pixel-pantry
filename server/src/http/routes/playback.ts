@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { FileRow } from "../../library/repo";
 import { listHistory, stats } from "../../playback/history";
@@ -57,10 +58,15 @@ async function trashTargets(deps: Deps, files: FileRow[], folders: boolean): Pro
   return [...out];
 }
 
+const exists = (p: string) => stat(p).then(() => true, () => false);
+
 async function trashFiles(deps: Deps, files: FileRow[], folders: boolean): Promise<string[]> {
-  const paths = await trashTargets(deps, files, folders);
+  const targets = await trashTargets(deps, files, folders);
+  // Paths already gone from disk are skipped; the rows are still marked deleted below.
+  const present = await Promise.all(targets.map(exists));
+  const paths = targets.filter((_, i) => present[i]);
   try {
-    await deps.trash(paths);
+    if (paths.length > 0) await deps.trash(paths);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     deps.log.error("trash failed", { paths, error });

@@ -163,8 +163,56 @@ test("delete movie trashes the file and its sidecars; non-movie is 404; trash fa
 
   const failing = setup({ trash: async () => { throw new Error("Finder said no"); } });
   const m = seedMovie(failing.deps.repo, "Alien");
+  touch(join(failing.deps.config().mediaRoot, "movies/Alien.mkv"));
   const f = await request(failing.app, `/api/movies/${m}`, { method: "DELETE" });
   expect(f.status).toBe(500);
   expect(f.json).toEqual({ error: "Finder said no" });
   expect((await request(failing.app, `/api/items/${m}`)).status).toBe(200);
+});
+
+const stored = (deps: ReturnType<typeof makeDeps>, id: number) =>
+  deps.db.query("SELECT position, duration, watched FROM playback WHERE item_id = ?").get(id);
+
+test("progress with duration 0 is accepted and leaves stored progress unchanged", async () => {
+  const { deps, app } = setup();
+  const id = seedMovie(deps.repo, "Heat");
+  await request(app, `/api/items/${id}/progress`, post({ position: 100, duration: 1000 }));
+  const r = await request(app, `/api/items/${id}/progress`, post({ position: 500, duration: 0 }));
+  expect(r.status).toBe(200);
+  expect(r.json.watched).toBe(false);
+  expect(stored(deps, id)).toEqual({ position: 100, duration: 1000, watched: 0 });
+});
+
+test("progress with a negative position is stored as 0", async () => {
+  const { deps, app } = setup();
+  const id = seedMovie(deps.repo, "Heat");
+  const r = await request(app, `/api/items/${id}/progress`, post({ position: -5, duration: 1000 }));
+  expect(r.status).toBe(200);
+  expect(r.json.watched).toBe(false);
+  expect(stored(deps, id)).toEqual({ position: 0, duration: 1000, watched: 0 });
+});
+
+test("progress past the duration is clamped and counts as watched", async () => {
+  const { deps, app } = setup();
+  const id = seedMovie(deps.repo, "Heat");
+  const r = await request(app, `/api/items/${id}/progress`, post({ position: 2000, duration: 1000 }));
+  expect(r.status).toBe(200);
+  expect(r.json.watched).toBe(true);
+  expect(stored(deps, id)).toEqual({ position: 1000, duration: 1000, watched: 1 });
+});
+
+test("delete with the video already gone from disk trashes nothing and still hides the item", async () => {
+  const { deps, app } = setup();
+  const root = deps.config().mediaRoot;
+  const gone = seedMovie(deps.repo, "Gone");
+  const id = seedMovie(deps.repo, "Heat");
+  touch(join(root, "movies/Heat.mkv"));
+
+  const r = await request(app, `/api/movies/${gone}`, { method: "DELETE" });
+  expect(r.status).toBe(200);
+  expect(r.json).toEqual({ trashed: [] });
+  expect(deps.trashed).toEqual([]);
+  expect((await request(app, `/api/items/${gone}`)).status).toBe(404);
+  expect((await request(app, `/api/items/${id}`)).status).toBe(200);
+  await deps.scanner.scan();
 });

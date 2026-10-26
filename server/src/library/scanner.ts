@@ -54,7 +54,11 @@ export class Scanner {
     phase: "done",
     lastError: null,
   };
+  /** The current run plus any rerun requested during it. */
   private inFlight: Promise<ScanStatus> | null = null;
+  /** Set once a run has yielded and begun walking; calls made after that ask for a rerun. */
+  private walkStarted = false;
+  private rerunRequested = false;
   private finishedCbs: (() => void)[] = [];
   private readonly now: () => number;
 
@@ -70,14 +74,29 @@ export class Scanner {
     this.finishedCbs.push(cb);
   }
 
-  /** Starts a scan, or returns the one already running. */
+  /**
+   * Starts a scan. Calls made before the running scan starts walking join it. Calls made once it is
+   * walking (it may already have listed files that changed since, e.g. a delete) queue exactly one more
+   * run after it; every caller's promise resolves when the last queued run finishes.
+   */
   scan(): Promise<ScanStatus> {
     if (!this.inFlight) {
-      this.inFlight = this.run().finally(() => {
+      this.inFlight = this.runUntilSettled().finally(() => {
         this.inFlight = null;
       });
+    } else if (this.walkStarted) {
+      this.rerunRequested = true;
     }
     return this.inFlight;
+  }
+
+  private async runUntilSettled(): Promise<ScanStatus> {
+    let st: ScanStatus;
+    do {
+      this.rerunRequested = false;
+      st = await this.run();
+    } while (this.rerunRequested);
+    return st;
   }
 
   private async run(): Promise<ScanStatus> {
@@ -91,6 +110,9 @@ export class Scanner {
       phase: "walking",
       lastError: null,
     };
+    // Yield once so calls made in the same tick as the start join this run instead of queueing another.
+    await null;
+    this.walkStarted = true;
     try {
       const root = this.deps.mediaRoot();
       if (!root || !existsSync(root)) {
@@ -107,6 +129,7 @@ export class Scanner {
       this.st.lastError = message(err);
       log.error("scan failed", { error: this.st.lastError });
     }
+    this.walkStarted = false;
     this.st.state = "idle";
     this.st.phase = "done";
     this.st.finishedAt = this.now();
