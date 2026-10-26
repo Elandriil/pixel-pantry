@@ -25,7 +25,8 @@ import app.pixelpantry.tv.ui.components.SidebarEntry
  * A browse screen: the collapsed sidebar on the left, [content] beside it. The sidebar overlays the content when
  * it expands. Content gets focus when the screen opens and again after any sidebar entry is chosen; focus
  * coming back from the sidebar returns to the last focused content element. Content may take focus itself on
- * open; the shell then leaves it where it is.
+ * open; the shell then leaves it where it is. With [reselect] (detail pages, which sit under a sidebar entry but
+ * are not its page) choosing the selected entry navigates too instead of only returning focus to the content.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -33,6 +34,7 @@ fun AppShell(
     selected: SidebarEntry,
     onSelect: (SidebarEntry) -> Unit,
     onRescan: () -> Unit,
+    reselect: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val contentFocus = remember { FocusRequester() }
@@ -58,7 +60,7 @@ fun AppShell(
         }
         Sidebar(
             selected = selected,
-            onSelect = { entry -> if (entry == selected) focusContent() else onSelect(entry) },
+            onSelect = { entry -> if (entry == selected && !reselect) focusContent() else onSelect(entry) },
             onRescan = { onRescan(); focusContent() },
         )
     }

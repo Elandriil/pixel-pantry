@@ -12,6 +12,7 @@ import app.pixelpantry.tv.server.ServerResolver
 import app.pixelpantry.tv.server.ServerStore
 import app.pixelpantry.tv.settings.SettingsRepo
 import app.pixelpantry.tv.ui.components.Toaster
+import app.pixelpantry.tv.ui.show.ShowViewModel
 import coil.ImageLoader
 import coil.disk.DiskCache
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +41,17 @@ class AppContainer(private val app: Application) {
                 updated = app.getString(R.string.scan_done),
                 scanFailed = { app.getString(R.string.scan_failed, it) },
             ),
+        )
+    }
+    val showStrings: ShowViewModel.Strings by lazy {
+        ShowViewModel.Strings(
+            play = app.getString(R.string.show_play),
+            resume = app.getString(R.string.show_resume),
+            playEpisode = { app.getString(R.string.show_play_episode, it) },
+            resumeEpisode = { tag, left -> app.getString(R.string.show_resume_episode, tag, left) },
+            markSeasonWatched = app.getString(R.string.show_mark_season_watched),
+            markSeasonUnwatched = app.getString(R.string.show_mark_season_unwatched),
+            movedToRecycleBin = app.getString(R.string.delete_moved),
         )
     }
     val settingsRepo: SettingsRepo by lazy { SettingsRepo(api, serverStore, scope) }

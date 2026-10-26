@@ -38,7 +38,7 @@ fun Card.key(): String = when (this) {
 
 /** Keeps the focused card about 15 % from the row's leading edge while scrolling. */
 @OptIn(ExperimentalFoundationApi::class)
-private object PivotBringIntoViewSpec : BringIntoViewSpec {
+internal object PivotBringIntoViewSpec : BringIntoViewSpec {
     private const val PIVOT = 0.15f
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
         offset - PIVOT * containerSize

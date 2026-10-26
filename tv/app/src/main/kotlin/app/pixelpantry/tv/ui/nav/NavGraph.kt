@@ -26,6 +26,8 @@ import app.pixelpantry.tv.ui.connect.ConnectScreen
 import app.pixelpantry.tv.ui.connect.ConnectViewModel
 import app.pixelpantry.tv.ui.home.HomeScreen
 import app.pixelpantry.tv.ui.home.HomeViewModel
+import app.pixelpantry.tv.ui.show.ShowScreen
+import app.pixelpantry.tv.ui.show.ShowViewModel
 
 object Routes {
     const val CONNECT = "connect"
@@ -65,6 +67,14 @@ private fun sidebarEntryFor(category: String): SidebarEntry = when (category) {
     else -> SidebarEntry.HOME
 }
 
+/** The sidebar entry of the page a detail page was opened from (Home when unknown). */
+private fun sidebarEntryForPrevious(previous: NavBackStackEntry?): SidebarEntry = when (previous?.destination?.route) {
+    Routes.HOME -> sidebarEntryFor(previous.arguments?.getString("category").orEmpty())
+    Routes.SEARCH -> SidebarEntry.SEARCH
+    Routes.HISTORY -> SidebarEntry.HISTORY
+    else -> SidebarEntry.HOME
+}
+
 /**
  * Sidebar destinations sit directly on top of the root Home entry (connect is popped on success, so the root is
  * always `home/home`): BACK from any of them returns to Home, BACK from Home leaves the app.
@@ -94,14 +104,37 @@ fun NavGraph(container: AppContainer) {
         nav.navigate(route) { launchSingleTop = true }
     }
 
+    /** Show/movie page events, with the same resumed guard as [open]. */
+    fun onShowEvent(entry: NavBackStackEntry, event: ShowViewModel.NavEvent) {
+        if (!entry.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        when (event) {
+            is ShowViewModel.NavEvent.Player ->
+                nav.navigate(Routes.player(event.itemId, event.fromStart)) { launchSingleTop = true }
+            ShowViewModel.NavEvent.Back -> nav.popBackStack()
+        }
+    }
+
     @Composable
-    fun Shell(selected: SidebarEntry, content: @Composable () -> Unit) =
+    fun Shell(selected: SidebarEntry, reselect: Boolean = false, content: @Composable () -> Unit) =
         AppShell(
             selected = selected,
             onSelect = { nav.openSidebarEntry(it) },
             onRescan = container.libraryScanner::rescan,
+            reselect = reselect,
             content = content,
         )
+
+    /** A show or movie page: the sidebar highlights the page it was opened from. */
+    @Composable
+    fun DetailPage(backStack: NavBackStackEntry, showId: Int?, movieItemId: Int?) {
+        val vm: ShowViewModel = viewModel(
+            factory = ShowViewModel.Factory(container.api, showId, movieItemId, container.toaster, container.showStrings),
+        )
+        val selected = remember(backStack) { sidebarEntryForPrevious(nav.previousBackStackEntry) }
+        Shell(selected, reselect = true) {
+            ShowScreen(vm, onNavigate = { event -> onShowEvent(backStack, event) })
+        }
+    }
 
     CompositionLocalProvider(LocalImageSource provides remember { ImageSource(container.imageLoader, container.api::resolve) }) {
         Box(Modifier.fillMaxSize()) {
@@ -130,13 +163,13 @@ fun NavGraph(container: AppContainer) {
                 composable(Routes.SETTINGS) {
                     Shell(SidebarEntry.SETTINGS) { PlaceholderScreen(stringResource(R.string.nav_settings)) }
                 }
-                // Detail and player stand-ins until Tasks 7–8, so opening a card has somewhere to go.
                 composable(Routes.SHOW, arguments = listOf(navArgument("id") { type = NavType.IntType })) {
-                    PlaceholderScreen(stringResource(R.string.placeholder_show, it.arguments?.getInt("id") ?: 0))
+                    DetailPage(it, showId = it.arguments?.getInt("id") ?: 0, movieItemId = null)
                 }
                 composable(Routes.MOVIE, arguments = listOf(navArgument("id") { type = NavType.IntType })) {
-                    PlaceholderScreen(stringResource(R.string.placeholder_movie, it.arguments?.getInt("id") ?: 0))
+                    DetailPage(it, showId = null, movieItemId = it.arguments?.getInt("id") ?: 0)
                 }
+                // Player stand-in until Task 8, so Play has somewhere to go.
                 composable(
                     Routes.PLAYER,
                     arguments = listOf(

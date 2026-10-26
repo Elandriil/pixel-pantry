@@ -44,9 +44,41 @@
     <string name="scan_done">Library updated</string>
     <string name="scan_failed">Scan failed: %1$s</string>
 
-    <!-- Stand-ins until the detail pages and the player exist -->
-    <string name="placeholder_show">Show %1$d</string>
-    <string name="placeholder_movie">Movie %1$d</string>
+    <!-- Show and movie pages -->
+    <string name="show_play">Play</string>
+    <string name="show_resume">Resume</string>
+    <string name="show_play_episode">Play %1$s</string>
+    <string name="show_resume_episode">Resume %1$s · %2$s</string>
+    <string name="show_mark_season_watched">Mark season watched</string>
+    <string name="show_mark_season_unwatched">Mark season unwatched</string>
+    <string name="show_more">⋯</string>
+    <string name="show_rating">★ %1$.1f</string>
+    <plurals name="show_seasons">
+        <item quantity="one">%1$d season</item>
+        <item quantity="other">%1$d seasons</item>
+    </plurals>
+    <plurals name="show_episodes">
+        <item quantity="one">%1$d episode</item>
+        <item quantity="other">%1$d episodes</item>
+    </plurals>
+    <string name="show_error_title">Could not load</string>
+    <string name="show_retry">Retry</string>
+    <string name="menu_mark_show_watched">Mark show watched</string>
+    <string name="menu_mark_show_unwatched">Mark show unwatched</string>
+    <string name="menu_mark_watched">Mark watched</string>
+    <string name="menu_mark_unwatched">Mark unwatched</string>
+    <string name="menu_play_from_start">Play from start</string>
+    <string name="menu_delete_from_pc">Delete from PC</string>
+    <string name="delete_title">Delete \"%1$s\" from the PC?</string>
+    <plurals name="delete_body">
+        <item quantity="one">%1$d file will be moved to the Recycle Bin.</item>
+        <item quantity="other">%1$d files will be moved to the Recycle Bin.</item>
+    </plurals>
+    <string name="delete_moved">Moved to Recycle Bin</string>
+    <string name="dialog_cancel">Cancel</string>
+    <string name="dialog_delete">Delete</string>
+
+    <!-- Stand-in until the player exists -->
     <string name="placeholder_player">Player %1$d</string>
 
     <!-- Generic -->
