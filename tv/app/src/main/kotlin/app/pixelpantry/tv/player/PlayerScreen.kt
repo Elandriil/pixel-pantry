@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -28,13 +29,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import app.pixelpantry.tv.R
-import app.pixelpantry.tv.player.PlayerViewModel.NavEvent
 import app.pixelpantry.tv.player.PlayerViewModel.UiState
 import app.pixelpantry.tv.ui.components.ButtonSpec
 import app.pixelpantry.tv.ui.components.ErrorScreen
@@ -44,11 +46,22 @@ import app.pixelpantry.tv.ui.components.Spinner
 /** Temporary skip for LEFT/RIGHT with the overlay hidden; Task 9 takes it from the settings. */
 private const val SKIP_SECONDS = 10
 
-/** Full-screen playback: video, the overlay on demand, a buffering spinner, or the error screen. */
+/**
+ * Full-screen playback: video, the overlay on demand, a buffering spinner, or the error screen. [onExit] leaves
+ * the screen; it is called once, as soon as an exit was requested and this screen's entry is resumed.
+ */
 @Composable
-fun PlayerScreen(vm: PlayerViewModel, onNavigate: (NavEvent) -> Unit) {
+fun PlayerScreen(vm: PlayerViewModel, onExit: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(vm) { vm.navEvents.collect(onNavigate) }
+    val exitRequested by vm.exitRequested.collectAsState()
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
+    val exited = remember { booleanArrayOf(false) }
+    LaunchedEffect(exitRequested, lifecycleState) {
+        if (exitRequested && lifecycleState.isAtLeast(Lifecycle.State.RESUMED) && !exited[0]) {
+            exited[0] = true
+            onExit()
+        }
+    }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.onHostStopped() }
 
     val current = state
@@ -138,10 +151,10 @@ private fun Playback(
 ) {
     val pauseFocus = remember { FocusRequester() }
 
-    // Keep the TV from dimming while video is up.
+    // Keep the TV from dimming while video plays (a paused player may let it sleep).
     val view = LocalView.current
-    DisposableEffect(view) {
-        view.keepScreenOn = true
+    DisposableEffect(view, state.paused) {
+        view.keepScreenOn = !state.paused
         onDispose { view.keepScreenOn = false }
     }
 

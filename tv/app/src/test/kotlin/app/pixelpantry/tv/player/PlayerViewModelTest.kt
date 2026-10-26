@@ -5,7 +5,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.media3.common.Player
 import app.pixelpantry.tv.api.ApiClient
-import app.pixelpantry.tv.player.PlayerViewModel.NavEvent
 import app.pixelpantry.tv.player.PlayerViewModel.UiState
 import app.pixelpantry.tv.server.ServerStore
 import app.pixelpantry.tv.settings.SettingsRepo
@@ -60,6 +59,11 @@ class PlayerViewModelTest {
     private val progressPosts = ConcurrentLinkedQueue<JsonObject>()
     private var itemBody: () -> MockResponse = { json(itemFixture(progress = """{"position":754.5,"duration":3000,"watched":false}""")) }
 
+    /** Stands in for the app scope the STOP report runs on; real threads, like the app's. */
+    private val exitScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var progressDelayMs = 0L
+    private var itemDelayMs = 0L
+
     /** Toasts clear on a real-time scope (see ShowViewModelTest). */
     private val toastScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val toaster = Toaster(toastScope)
@@ -78,10 +82,11 @@ class PlayerViewModelTest {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val line = "${request.method} ${request.path}"
                 return when (line) {
-                    "GET /api/items/4" -> itemBody()
+                    "GET /api/items/4" -> itemBody().setHeadersDelay(itemDelayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
                     "POST /api/items/4/progress" -> {
                         progressPosts += Json.parseToJsonElement(request.body.readUtf8()) as JsonObject
                         json("""{"sessionId":7,"watched":false}""")
+                            .setHeadersDelay(progressDelayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
                     }
                     else -> MockResponse().setResponseCode(404)
                 }
@@ -101,6 +106,7 @@ class PlayerViewModelTest {
         Thread.sleep(50)
         Dispatchers.resetMain()
         toastScope.cancel()
+        exitScope.cancel()
         runCatching { server.shutdown() }
     }
 
@@ -124,7 +130,10 @@ class PlayerViewModelTest {
         val factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                PlayerViewModel(api, settings, reporter, toaster, strings, itemId = 4, fromStart = fromStart, port = port) as T
+                PlayerViewModel(
+                    api, settings, reporter, toaster, strings, itemId = 4, fromStart = fromStart, port = port,
+                    exitScope = exitScope,
+                ) as T
         }
         return ViewModelProvider(store, factory)[PlayerViewModel::class.java]
     }
@@ -133,12 +142,6 @@ class PlayerViewModelTest {
         state.first { it !is UiState.Loading } as UiState.Playing
 
     private fun PlayerViewModel.current(): UiState.Playing = state.value as UiState.Playing
-
-    private fun TestScope.collectEvents(vm: PlayerViewModel): MutableList<NavEvent> {
-        val events = mutableListOf<NavEvent>()
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.navEvents.toList(events) }
-        return events
-    }
 
     /** Waits in real time (HTTP runs on real threads) until [condition] holds, failing after 5 s. */
     private suspend fun awaitRealTime(condition: () -> Boolean) = withContext(Dispatchers.Default) {
@@ -218,22 +221,60 @@ class PlayerViewModelTest {
         assertFalse(vm.current().paused)
     }
 
-    @Test fun stopAndExitPausesFlushesThenNavigatesBack() = playerTest {
+    @Test fun stopAndExitAsksToLeaveAtOnceAndReportsOnTheAppScope() = playerTest {
+        progressDelayMs = 1_000 // a slow server must not hold the user on the player
         val vm = vm()
-        val events = collectEvents(vm)
         vm.playing()
         port.duration = 3_000_000
         port.position = 900_000
         vm.stopAndExit()
         assertEquals("pause", port.calls.last())
-        val back = vm.navEvents.first()
-        assertEquals(NavEvent.Back, back)
-        assertTrue("flushed before going back", progressPosts.any { it["position"]!!.jsonPrimitive.double == 900.0 })
-        assertEquals(listOf(NavEvent.Back), events)
+        assertTrue("exit requested before the server answered", vm.exitRequested.value)
+        assertTrue(progressPosts.none { it["position"]!!.jsonPrimitive.double == 900.0 })
+
+        // The report survives the view model.
+        store.clear()
+        awaitRealTime { progressPosts.any { it["position"]!!.jsonPrimitive.double == 900.0 } }
 
         vm.stopAndExit() // a second BACK does nothing more
+        vm.onHostStopped() // and leaving the app afterwards sends no PAUSE report
+        withContext(Dispatchers.Default) { delay(300) }
+        assertEquals(1, progressPosts.size)
+    }
+
+    @Test fun stopAndExitWhileLoadingLeavesAndNeverStartsPlayback() = playerTest {
+        itemDelayMs = 300
+        val vm = vm()
+        assertEquals(UiState.Loading, vm.state.value)
+        vm.stopAndExit()
+        assertTrue(vm.exitRequested.value)
+        withContext(Dispatchers.Default) { delay(600) }
         runCurrent()
-        assertEquals(listOf(NavEvent.Back), events)
+        assertTrue(port.calls.none { it == "prepare" || it == "play" })
+        assertTrue(vm.exitRequested.value)
+    }
+
+    @Test fun aPauseByThePlayerItselfShowsPausedAndReportsOnce() = playerTest {
+        val vm = vm()
+        vm.playing()
+        port.duration = 3_000_000
+        port.position = 820_000
+        port.playing = false
+        port.whenReady = false
+        port.fire { it.onPlayWhenReadyChanged(false, Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY) }
+        assertTrue(vm.current().paused)
+        assertTrue(vm.current().overlayVisible)
+        awaitRealTime { progressPosts.isNotEmpty() }
+        withContext(Dispatchers.Default) { delay(300) }
+        assertEquals(1, progressPosts.size)
+        assertEquals(820.0, progressPosts.single()["position"]!!.jsonPrimitive.double, 0.0)
+
+        advanceTimeBy(10_000)
+        assertTrue("overlay stays while paused", vm.current().overlayVisible)
+
+        vm.togglePause() // one OK resumes
+        assertEquals("play", port.calls.last())
+        assertFalse(vm.current().paused)
     }
 
     @Test fun playerErrorShowsTheMessageAndFileName() = playerTest {
@@ -246,10 +287,8 @@ class PlayerViewModelTest {
         assertEquals("Severance S01E01.mkv", s.fileName)
 
         // Back from the error screen leaves the player.
-        val events = collectEvents(vm)
         vm.stopAndExit()
-        runCurrent()
-        assertEquals(listOf(NavEvent.Back), events)
+        assertTrue(vm.exitRequested.value)
     }
 
     @Test fun loadFailureIsAnError() = playerTest {

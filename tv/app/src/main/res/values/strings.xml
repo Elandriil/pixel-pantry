@@ -85,7 +85,7 @@
     <string name="player_subtitles_off">Off</string>
     <string name="player_audio_default">Default</string>
     <string name="player_prev">⏮︎ Prev</string>
-    <string name="player_pause">⏸︎ Pause</string>
+    <string name="player_pause">‖ Pause</string>
     <string name="player_play">▶︎ Play</string>
     <string name="player_next">⏭︎ Next episode</string>
     <string name="player_audio">Audio: %1$s</string>

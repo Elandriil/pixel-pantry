@@ -3,6 +3,7 @@ package app.pixelpantry.tv.player
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -35,9 +36,9 @@ class PlaybackErrorTexts(
  * [PlayerPort] over ExoPlayer, direct-playing the server's stream URL.
  *
  * A lost server must surface as an error within seconds (Review Focus 3), but ExoPlayer only reports a failed
- * load once its buffer has drained, which can be most of a minute. So the load error policy gives up after
- * [MAX_LOAD_ERRORS] consecutive failures of the same load (the count resets whenever data arrives) and reports
- * the failure itself.
+ * load once its buffer has drained, which can be most of a minute. So the load error policy retries every
+ * 1–2 s and gives up once a load has kept failing for [GIVE_UP_AFTER_MS] (any data arriving starts over), then
+ * reports the failure itself. A Wi-Fi blip of a few seconds is ridden out; a dead server shows in about 10 s.
  */
 @OptIn(UnstableApi::class)
 class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : PlayerPort {
@@ -45,10 +46,16 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
     private val main = Handler(Looper.getMainLooper())
     private var failed = false
 
+    /** Start of the current run of failed attempts of a load (loader thread). */
+    @Volatile private var failingSinceMs = 0L
+
     private val loadErrorPolicy = object : DefaultLoadErrorHandlingPolicy() {
         override fun getRetryDelayMsFor(info: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
-            val delay = super.getRetryDelayMsFor(info)
-            if (delay != C.TIME_UNSET && info.errorCount < MAX_LOAD_ERRORS) return delay
+            val now = SystemClock.elapsedRealtime()
+            // errorCount restarts at 1 whenever the load made progress, so a run starts there.
+            if (info.errorCount <= 1) failingSinceMs = now
+            val fatal = super.getRetryDelayMsFor(info) == C.TIME_UNSET
+            if (!fatal && now - failingSinceMs < GIVE_UP_AFTER_MS) return if (info.errorCount <= 1) 1_000 else 2_000
             val message = describe(info.exception)
             main.post { fail(message) }
             return C.TIME_UNSET
@@ -74,6 +81,8 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
     init {
         exoPlayer.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) = listeners.forEach { it.onIsPlayingChanged(isPlaying) }
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) =
+                listeners.forEach { it.onPlayWhenReadyChanged(playWhenReady, reason) }
             override fun onPlaybackStateChanged(playbackState: Int) =
                 listeners.forEach { it.onPlaybackStateChanged(playbackState) }
 
@@ -84,9 +93,12 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
     override val currentPositionMs: Long get() = exoPlayer.currentPosition
     override val durationMs: Long? get() = exoPlayer.duration.takeIf { it != C.TIME_UNSET }
     override val isPlaying: Boolean get() = exoPlayer.isPlaying
+    override val playWhenReady: Boolean get() = exoPlayer.playWhenReady
     override val playbackState: Int get() = exoPlayer.playbackState
 
     override fun prepare(mediaItem: MediaItem) {
+        // A failure posted for the previous item must not end this one.
+        main.removeCallbacksAndMessages(null)
         failed = false
         exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
@@ -139,7 +151,7 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
     }
 
     private companion object {
-        /** Connection refused fails fast (about 3 s of retries); an unreachable PC costs a connect timeout each. */
-        const val MAX_LOAD_ERRORS = 3
+        /** How long one load may keep failing before playback stops with an error. */
+        const val GIVE_UP_AFTER_MS = 8_000L
     }
 }

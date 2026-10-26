@@ -12,13 +12,11 @@ import app.pixelpantry.tv.api.Track
 import app.pixelpantry.tv.player.ProgressReporter.Reason
 import app.pixelpantry.tv.settings.SettingsRepo
 import app.pixelpantry.tv.ui.components.Toaster
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -39,6 +37,8 @@ class PlayerViewModel(
     private val itemId: Int,
     private val fromStart: Boolean,
     private val port: PlayerPort,
+    /** Outlives this view model: the STOP report is sent from here so leaving never waits for the server. */
+    private val exitScope: CoroutineScope,
 ) : ViewModel() {
 
     /** Texts from string resources. */
@@ -71,26 +71,39 @@ class PlayerViewModel(
         }
     }
 
-    sealed class NavEvent {
-        data object Back : NavEvent()
-    }
-
     private val _state = MutableStateFlow<UiState>(UiState.Loading)
     val state: StateFlow<UiState> = _state.asStateFlow()
 
-    private val _navEvents = MutableSharedFlow<NavEvent>(extraBufferCapacity = 4)
-    val navEvents: SharedFlow<NavEvent> = _navEvents.asSharedFlow()
+    /**
+     * Set once the user asked to leave. A state, not an event: the screen leaves when it can (its entry may not
+     * be resumed yet, e.g. BACK during the enter transition), so the request cannot be lost.
+     */
+    private val _exitRequested = MutableStateFlow(false)
+    val exitRequested: StateFlow<Boolean> = _exitRequested.asStateFlow()
 
     /** The player the screen renders (null in tests). */
     val exoPlayer get() = port.exoPlayer
 
     private var detail: ItemDetail? = null
+    private var loadJob: Job? = null
     private var tickerJob: Job? = null
     private var hideJob: Job? = null
     private var reportJob: Job? = null
     private var exiting = false
 
     private val listener = object : PlayerListener {
+        /** Pauses the player makes itself (audio focus lost, headphones out) show and report like the user's. */
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            val s = _state.value as? UiState.Playing ?: return
+            if (s.paused == !playWhenReady) return
+            updatePlaying { it.copy(paused = !playWhenReady) }
+            if (!playWhenReady) {
+                hideJob?.cancel()
+                updatePlaying { it.copy(overlayVisible = true) }
+                if (reason != Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST && !exiting) flush(Reason.PAUSE)
+            }
+        }
+
         override fun onPlaybackStateChanged(state: Int) {
             updatePlaying { it.copy(buffering = state == Player.STATE_BUFFERING) }
             if (state == Player.STATE_ENDED) {
@@ -110,13 +123,14 @@ class PlayerViewModel(
     }
 
     private fun load() {
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             val d = try {
                 api.item(itemId)
             } catch (e: ApiException) {
                 _state.value = UiState.Error(strings.playbackFailed, e.message.orEmpty(), fileName = null)
                 return@launch
             }
+            if (exiting) return@launch
             detail = d
             // Subtitle configurations (sidecars) arrive with Task 10's SubtitlePlan; embedded tracks need none.
             port.prepare(MediaItem.Builder().setUri(api.resolve(d.streamUrl)).setMediaId(d.item.id.toString()).build())
@@ -161,11 +175,11 @@ class PlayerViewModel(
         val s = _state.value as? UiState.Playing ?: return
         if (s.paused) {
             port.play()
-            _state.value = s.copy(paused = false)
+            updatePlaying { it.copy(paused = false) }
             showOverlay()
         } else {
             port.pause()
-            _state.value = s.copy(paused = true, positionMs = port.currentPositionMs)
+            updatePlaying { it.copy(paused = true, positionMs = port.currentPositionMs) }
             showOverlay()
             flush(Reason.PAUSE)
         }
@@ -204,20 +218,28 @@ class PlayerViewModel(
         updatePlaying { it.copy(overlayVisible = false) }
     }
 
-    /** BACK with the overlay hidden (or from the error screen): saves the position, then leaves. */
+    /**
+     * BACK with the overlay hidden, or from the loading / error screen: stops at once and asks to leave; the
+     * position is reported on [exitScope] so a slow server never holds the user on this screen.
+     */
     fun stopAndExit() {
         if (exiting) return
         exiting = true
-        val playing = _state.value is UiState.Playing
-        if (playing) port.pause()
-        viewModelScope.launch {
-            if (playing) flushNow(Reason.STOP)
-            _navEvents.emit(NavEvent.Back)
+        loadJob?.cancel()
+        tickerJob?.cancel()
+        hideJob?.cancel()
+        if (_state.value is UiState.Playing) {
+            port.pause()
+            val duration = port.durationMs?.takeIf { it > 0 }
+            val position = port.currentPositionMs
+            if (duration != null) exitScope.launch { reporter.flush(position / 1000.0, duration / 1000.0, Reason.STOP) }
         }
+        _exitRequested.value = true
     }
 
     /** The app went to the background: pause and save the position (playback resumes with OK). */
     fun onHostStopped() {
+        if (exiting) return
         val s = _state.value as? UiState.Playing ?: return
         if (!s.paused) togglePause()
     }
@@ -275,10 +297,11 @@ class PlayerViewModel(
         private val itemId: Int,
         private val fromStart: Boolean,
         private val port: () -> PlayerPort,
+        private val exitScope: CoroutineScope,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            PlayerViewModel(api, settingsRepo, reporter(), toaster, strings, itemId, fromStart, port()) as T
+            PlayerViewModel(api, settingsRepo, reporter(), toaster, strings, itemId, fromStart, port(), exitScope) as T
     }
 
     companion object {

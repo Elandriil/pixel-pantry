@@ -188,14 +188,11 @@ fun NavGraph(container: AppContainer) {
                             container.api, container.settingsRepo, container::progressReporter, container.toaster,
                             container.playerStrings, itemId, fromStart,
                             port = { ExoPlayerPort(context, container.playbackErrorTexts) },
+                            exitScope = container.scope,
                         ),
                     )
-                    PlayerScreen(vm, onNavigate = { event ->
-                        if (!backStack.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@PlayerScreen
-                        when (event) {
-                            PlayerViewModel.NavEvent.Back -> nav.popBackStack()
-                        }
-                    })
+                    // PlayerScreen calls this once its entry is resumed.
+                    PlayerScreen(vm, onExit = { nav.popBackStack() })
                 }
             }
             ToastHost(container.toaster)

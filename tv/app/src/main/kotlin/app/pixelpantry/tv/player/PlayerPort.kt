@@ -16,6 +16,9 @@ interface PlayerPort {
     val durationMs: Long?
     val isPlaying: Boolean
 
+    /** Whether the player wants to play: false once paused, by the user or by the player itself. */
+    val playWhenReady: Boolean
+
     /** One of `Player.STATE_*`. */
     val playbackState: Int
 
@@ -31,6 +34,9 @@ interface PlayerPort {
 /** Player events, delivered on the main thread. */
 interface PlayerListener {
     fun onIsPlayingChanged(isPlaying: Boolean) {}
+
+    /** [reason] is a `Player.PLAY_WHEN_READY_CHANGE_REASON_*`: the user, audio focus loss, headphones out, … */
+    fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {}
     fun onPlaybackStateChanged(state: Int) {}
 
     /** Playback stopped for good; [message] is plain words for the error screen. */
