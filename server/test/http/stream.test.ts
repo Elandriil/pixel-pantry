@@ -79,13 +79,24 @@ describe("GET /api/items/:id/stream", () => {
     expect(res.headers.get("Content-Range")).toBe("bytes */10000");
   });
 
-  test("start > end -> 416; suffix range -> 416", async () => {
+  test("start > end -> 416; zero-length suffix -> 416", async () => {
     const { app, id } = setup();
-    for (const r of ["bytes=500-100", "bytes=-500"]) {
+    for (const r of ["bytes=500-100", "bytes=-0"]) {
       const res = await get(app, id, r);
       expect(res.status).toBe(416);
       expect(res.headers.get("Content-Range")).toBe("bytes */10000");
     }
+  });
+
+  test("suffix range serves the last n bytes", async () => {
+    const { app, id } = setup();
+    const res = await get(app, id, "bytes=-500");
+    expect(res.status).toBe(206);
+    expect(res.headers.get("Content-Range")).toBe("bytes 9500-9999/10000");
+    expect(res.headers.get("Content-Length")).toBe("500");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes.slice(9500));
+    const big = await get(app, id, "bytes=-999999");
+    expect(big.headers.get("Content-Range")).toBe("bytes 0-9999/10000");
   });
 
   test("multiple ranges serve the first", async () => {

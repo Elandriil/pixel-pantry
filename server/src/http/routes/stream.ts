@@ -22,7 +22,7 @@ type ByteRange = { start: number; end: number } | "unsatisfiable" | null;
 
 /**
  * Parses a `Range` header against a file of `size` bytes. Only `bytes=a-b` and `bytes=a-` are served;
- * with several ranges the first wins; suffix ranges (`bytes=-n`) are answered 416 as unsupported.
+ * with several ranges the first wins; a suffix range `bytes=-n` is the last n bytes (n = 0 is 416).
  * Returns null when the header should be ignored (absent or not a bytes range) so the full file is served.
  */
 function parseRange(header: string | undefined, size: number): ByteRange {
@@ -30,7 +30,10 @@ function parseRange(header: string | undefined, size: number): ByteRange {
   if (!m) return null;
   const spec = m[1]!.trim().match(/^(\d*)-(\d*)$/);
   if (!spec || (spec[1] === "" && spec[2] === "")) return null;
-  if (spec[1] === "") return "unsatisfiable";
+  if (spec[1] === "") {
+    const n = Number(spec[2]);
+    return n === 0 || size === 0 ? "unsatisfiable" : { start: Math.max(0, size - n), end: size - 1 };
+  }
   const start = Number(spec[1]);
   const end = Math.min(spec[2] === "" ? size - 1 : Number(spec[2]), size - 1);
   return start >= size || start > end ? "unsatisfiable" : { start, end };
