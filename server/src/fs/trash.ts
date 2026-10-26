@@ -2,11 +2,26 @@ import { stat } from "node:fs/promises";
 
 export type RunFn = (cmd: string[]) => Promise<void>;
 
-/** Spawns `cmd` and rejects on a non-zero exit, with stderr in the message. */
-export async function defaultRun(cmd: string[]): Promise<void> {
+const TRASH_TIMEOUT_MS = 60_000;
+
+/**
+ * Spawns `cmd` and rejects on a non-zero exit with its stderr as the message (or the exit code when stderr is
+ * empty). After `timeoutMs` the process is killed and the promise rejects with "trash timeout".
+ */
+export async function defaultRun(cmd: string[], timeoutMs = TRASH_TIMEOUT_MS): Promise<void> {
   const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "pipe" });
-  const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
-  if (code !== 0) throw new Error(`${cmd[0]} exited with ${code}: ${stderr.trim()}`);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    proc.kill(9);
+  }, timeoutMs);
+  try {
+    const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+    if (timedOut) throw new Error("trash timeout");
+    if (code !== 0) throw new Error(stderr.trim() || `${cmd[0]} exited with ${code}`);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const psQuote = (s: string) => `'${s.replaceAll("'", "''")}'`;

@@ -93,3 +93,21 @@ test("apiKey getter is re-read on each call", async () => {
   await client.searchTv("Severance");
   expect(urls).toEqual(["https://api.themoviedb.org/3/search/tv?query=Severance&api_key=NEW"]);
 });
+
+test("a request that never answers is rejected with TMDB timeout", async () => {
+  let signal: AbortSignal | undefined;
+  const fetchFn = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    signal = init?.signal ?? undefined;
+    return new Promise<Response>(() => {});
+  }) as FetchFn;
+  const client = new TmdbClient({ apiKey: "K", fetchFn, cache: { get: () => null, set: () => {} }, timeoutMs: 20 });
+  await expect(client.tvDetails(1)).rejects.toThrow("TMDB timeout");
+  expect(signal?.aborted).toBe(true);
+});
+
+test("an abort error from fetch is reported as TMDB timeout", async () => {
+  const fetchFn = ((_input: RequestInfo | URL, init?: RequestInit) =>
+    new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)))) as FetchFn;
+  const client = new TmdbClient({ apiKey: "K", fetchFn, cache: { get: () => null, set: () => {} }, timeoutMs: 20 });
+  await expect(client.searchTv("x")).rejects.toThrow("TMDB timeout");
+});

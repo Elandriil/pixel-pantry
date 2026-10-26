@@ -41,7 +41,8 @@ const port = deps.config().port;
 
 let server: ReturnType<typeof Bun.serve>;
 try {
-  server = Bun.serve({ port, hostname: "0.0.0.0", fetch: (req, srv) => app.fetch(req, { server: srv }) });
+  // idleTimeout 0: a paused TV player keeps its stream connection open without sending anything
+  server = Bun.serve({ port, hostname: "0.0.0.0", idleTimeout: 0, fetch: (req, srv) => app.fetch(req, { server: srv }) });
 } catch (err) {
   if ((err as { code?: string }).code === "EADDRINUSE") {
     log.error(`Port ${port} already in use (is Pixel Pantry already running?)`);

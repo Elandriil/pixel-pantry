@@ -1,3 +1,4 @@
+import { DEFAULT_TIMEOUT_MS, withTimeout } from "../net";
 import { resolve, type FetchFn, type Lazy } from "../types";
 
 const BASE = "https://api.themoviedb.org";
@@ -69,12 +70,14 @@ export class TmdbClient {
   private readonly fetchFn: FetchFn;
   private readonly cache: TmdbCache;
   private readonly maxAgeMs: number;
+  private readonly timeoutMs: number;
 
-  constructor(opts: { apiKey: Lazy<string>; fetchFn: FetchFn; cache: TmdbCache; cacheMaxAgeMs?: number }) {
+  constructor(opts: { apiKey: Lazy<string>; fetchFn: FetchFn; cache: TmdbCache; cacheMaxAgeMs?: number; timeoutMs?: number }) {
     this.apiKey = opts.apiKey;
     this.fetchFn = opts.fetchFn;
     this.cache = opts.cache;
     this.maxAgeMs = opts.cacheMaxAgeMs ?? DEFAULT_MAX_AGE_MS;
+    this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   searchTv(query: string, year?: number | null): Promise<TmdbSearchResult[]> {
@@ -129,10 +132,13 @@ export class TmdbClient {
     const url = bearer
       ? `${BASE}${path}`
       : `${BASE}${path}${path.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(apiKey)}`;
-    const res = await this.fetchFn(url, {
-      headers: bearer ? { Authorization: `Bearer ${apiKey}`, Accept: "application/json" } : { Accept: "application/json" },
+    const { res, body } = await withTimeout("TMDB", this.timeoutMs, async (signal) => {
+      const res = await this.fetchFn(url, {
+        headers: bearer ? { Authorization: `Bearer ${apiKey}`, Accept: "application/json" } : { Accept: "application/json" },
+        signal,
+      });
+      return { res, body: await res.text() };
     });
-    const body = await res.text();
     if (!res.ok) throw new Error(`TMDB ${res.status}: ${body}`);
     this.cache.set(path, body);
     return JSON.parse(body) as T;

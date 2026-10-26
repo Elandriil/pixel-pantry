@@ -132,3 +132,9 @@ test("credential getters are re-read on each call and a changed login drops the 
   expect(downloads.map((c) => c.headers.get("Authorization"))).toEqual(["Bearer T1", "Bearer T1", "Bearer T2"]);
   expect(downloads[0]!.headers.get("Api-Key")).toBe("K");
 });
+
+test("a search that never answers is rejected with OpenSubtitles timeout", async () => {
+  const fetchFn = (() => new Promise<Response>(() => {})) as unknown as FetchFn;
+  const client = new OsClient({ apiKey: "K", username: "u", password: "p", fetchFn, timeoutMs: 20 });
+  await expect(client.search({ query: "Heat", type: "movie" })).rejects.toThrow("OpenSubtitles timeout");
+});

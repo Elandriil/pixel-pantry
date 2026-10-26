@@ -60,3 +60,9 @@ test("unsafe paths are rejected without fetching", async () => {
   }
   expect(state.calls).toBe(0);
 });
+
+test("an image download that never answers is rejected with image timeout", async () => {
+  const fetchFn = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+  const store = new ImageStore({ dir: tmpDir(), fetchFn, timeoutMs: 20 });
+  await expect(store.ensure("w500", "/slow.jpg")).rejects.toThrow("image timeout");
+});

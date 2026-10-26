@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { trashPaths } from "../src/fs/trash";
+import { defaultRun, trashPaths } from "../src/fs/trash";
 import { tmpDir, touch } from "./helpers";
 
 function recorder() {
@@ -44,4 +44,16 @@ test("other platforms reject; empty list does nothing", async () => {
   await expect(trashPaths(["/x"], run, "linux")).rejects.toThrow("trash not supported on linux");
   await trashPaths([], run, "darwin");
   expect(cmds).toEqual([]);
+});
+
+test("defaultRun kills a command that outlives the timeout and rejects with trash timeout", async () => {
+  const started = Date.now();
+  await expect(defaultRun(["sleep", "5"], 50)).rejects.toThrow("trash timeout");
+  expect(Date.now() - started).toBeLessThan(2000);
+});
+
+test("defaultRun rejects with stderr on a non-zero exit", async () => {
+  await expect(defaultRun(["sh", "-c", "echo 'no can do' >&2; exit 3"])).rejects.toThrow(/^no can do$/);
+  await expect(defaultRun(["sh", "-c", "exit 4"])).rejects.toThrow("sh exited with 4");
+  await defaultRun(["true"]);
 });

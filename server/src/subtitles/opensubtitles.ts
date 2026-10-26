@@ -1,3 +1,4 @@
+import { DEFAULT_TIMEOUT_MS, withTimeout } from "../net";
 import { resolve, type FetchFn, type Lazy } from "../types";
 
 const BASE = "https://api.opensubtitles.com/api/v1";
@@ -42,9 +43,18 @@ export class OsClient {
       password: Lazy<string>;
       fetchFn: FetchFn;
       userAgent?: string;
+      timeoutMs?: number;
     },
   ) {
     this.userAgent = opts.userAgent ?? "PixelPantry v1";
+  }
+
+  /** One request, its body read as text, within the timeout. */
+  private request(url: string, init: RequestInit): Promise<{ status: number; ok: boolean; text: string }> {
+    return withTimeout("OpenSubtitles", this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, async (signal) => {
+      const res = await this.opts.fetchFn(url, { ...init, signal });
+      return { status: res.status, ok: res.ok, text: await res.text() };
+    });
   }
 
   private headers(post: boolean, token?: string): Record<string, string> {
@@ -74,9 +84,9 @@ export class OsClient {
     add(q.type === "episode" ? "parent_tmdb_id" : "tmdb_id", q.tmdbId);
     params.set("languages", "en");
     params.set("type", q.type);
-    const res = await this.opts.fetchFn(`${BASE}/subtitles?${params}`, { headers: this.headers(false) });
-    if (!res.ok) throw new Error(`OpenSubtitles ${res.status}: ${await res.text()}`);
-    const body = (await res.json()) as { data?: { attributes?: OsAttributes }[] };
+    const res = await this.request(`${BASE}/subtitles?${params}`, { headers: this.headers(false) });
+    if (!res.ok) throw new Error(`OpenSubtitles ${res.status}: ${res.text}`);
+    const body = JSON.parse(res.text) as { data?: { attributes?: OsAttributes }[] };
     const out: OsResult[] = [];
     for (const d of body.data ?? []) {
       const a = d.attributes;
@@ -97,13 +107,13 @@ export class OsClient {
   private async login(): Promise<string> {
     const apiKey = resolve(this.opts.apiKey);
     const username = resolve(this.opts.username);
-    const res = await this.opts.fetchFn(`${BASE}/login`, {
+    const res = await this.request(`${BASE}/login`, {
       method: "POST",
       headers: this.headers(true),
       body: JSON.stringify({ username, password: resolve(this.opts.password) }),
     });
-    if (!res.ok) throw new Error(`OpenSubtitles ${res.status}: ${await res.text()}`);
-    const { token } = (await res.json()) as { token: string };
+    if (!res.ok) throw new Error(`OpenSubtitles ${res.status}: ${res.text}`);
+    const { token } = JSON.parse(res.text) as { token: string };
     this.session = { token, apiKey, username };
     return token;
   }
@@ -115,8 +125,8 @@ export class OsClient {
     return s.token;
   }
 
-  private requestDownload(fileId: number, token: string): Promise<Response> {
-    return this.opts.fetchFn(`${BASE}/download`, {
+  private requestDownload(fileId: number, token: string) {
+    return this.request(`${BASE}/download`, {
       method: "POST",
       headers: this.headers(true, token),
       body: JSON.stringify({ file_id: fileId }),
@@ -130,10 +140,10 @@ export class OsClient {
       this.session = null;
       res = await this.requestDownload(fileId, await this.login());
     }
-    if (!res.ok) throw new Error(`OpenSubtitles ${res.status}: ${await res.text()}`);
-    const { link } = (await res.json()) as { link: string };
-    const file = await this.opts.fetchFn(link, { headers: { "User-Agent": this.userAgent } });
-    if (!file.ok) throw new Error(`OpenSubtitles ${file.status}: ${await file.text()}`);
-    return file.text();
+    if (!res.ok) throw new Error(`OpenSubtitles ${res.status}: ${res.text}`);
+    const { link } = JSON.parse(res.text) as { link: string };
+    const file = await this.request(link, { headers: { "User-Agent": this.userAgent } });
+    if (!file.ok) throw new Error(`OpenSubtitles ${file.status}: ${file.text}`);
+    return file.text;
   }
 }
