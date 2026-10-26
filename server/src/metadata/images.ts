@@ -4,8 +4,16 @@ import type { FetchFn } from "../types";
 
 export type ImageSize = "w342" | "w500" | "w780" | "w1280" | "original";
 
+const SAFE_NAME = /^[\w.-]+\.(jpg|jpeg|png|webp)$/i;
+
+function safeName(tmdbPath: string): string | null {
+  const name = basename(tmdbPath);
+  return name !== "." && name !== ".." && SAFE_NAME.test(name) ? name : null;
+}
+
 export function imageUrl(size: ImageSize, tmdbPath: string | null): string | null {
-  return tmdbPath ? `/api/images/${size}/${basename(tmdbPath)}` : null;
+  const name = tmdbPath ? safeName(tmdbPath) : null;
+  return name ? `/api/images/${size}/${name}` : null;
 }
 
 export class ImageStore {
@@ -19,6 +27,7 @@ export class ImageStore {
   }
 
   ensure(size: ImageSize, tmdbPath: string): Promise<string> {
+    if (!safeName(tmdbPath)) return Promise.reject(new Error("image invalid path"));
     const key = size + tmdbPath;
     let p = this.inflight.get(key);
     if (!p) {
@@ -30,10 +39,13 @@ export class ImageStore {
 
   private async load(size: ImageSize, tmdbPath: string): Promise<string> {
     const target = join(this.dir, size, basename(tmdbPath));
-    if (await stat(target).then(() => true, () => false)) return target;
+    if (await stat(target).then((st) => st.isFile(), () => false)) return target;
 
     const res = await this.fetchFn(`https://image.tmdb.org/t/p/${size}${tmdbPath}`);
-    if (!res.ok) throw new Error(`image ${res.status}`);
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new Error(`image ${res.status}`);
+    }
     const bytes = new Uint8Array(await res.arrayBuffer());
 
     await mkdir(join(this.dir, size), { recursive: true });

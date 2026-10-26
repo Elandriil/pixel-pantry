@@ -23,3 +23,14 @@ test("missing root does not throw and close resolves", async () => {
   const w = watchRoot(join(tmpDir(), "nope"), () => {}, { debounceMs: 50, stabilityThresholdMs: 50 });
   await w.close();
 });
+
+test("ignores non-video files", async () => {
+  const root = tmpDir();
+  let calls = 0;
+  const w = watchRoot(root, () => calls++, { debounceMs: 100, stabilityThresholdMs: 100 });
+  await sleep(300);
+  touch(join(root, "notes.txt"), 10);
+  await sleep(800);
+  expect(calls).toBe(0);
+  await w.close();
+});

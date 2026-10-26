@@ -49,3 +49,14 @@ test("imageUrl builds api path or null", () => {
   expect(imageUrl("w500", "/abc.jpg")).toBe("/api/images/w500/abc.jpg");
   expect(imageUrl("w500", null)).toBeNull();
 });
+
+test("unsafe paths are rejected without fetching", async () => {
+  const dir = tmpDir();
+  const { state, fetchFn } = fake();
+  const store = new ImageStore({ dir, fetchFn });
+  for (const bad of ["/..", "/.", "/", "/x?y.jpg", "/x#y.jpg", "/abc.txt"]) {
+    await expect(store.ensure("w500", bad)).rejects.toThrow("image invalid path");
+    expect(imageUrl("w500", bad)).toBeNull();
+  }
+  expect(state.calls).toBe(0);
+});
