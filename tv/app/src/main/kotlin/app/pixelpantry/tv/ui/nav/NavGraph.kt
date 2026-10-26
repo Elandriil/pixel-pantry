@@ -220,10 +220,11 @@ fun NavGraph(container: AppContainer) {
                             container.playerStrings, itemId, fromStart,
                             port = { ExoPlayerPort(context, container.playbackErrorTexts) },
                             exitScope = container.scope,
+                            reconnect = container::reconnect,
                         ),
                     )
                     // PlayerScreen calls this once its entry is resumed.
-                    PlayerScreen(vm, onExit = { nav.popBackStack() })
+                    PlayerScreen(vm, onExit = { nav.popBackStack() }, onChangeServer = ::changeServer)
                 }
             }
             // In the player the top-right corner belongs to the autoplay banner; toasts go top-left there.

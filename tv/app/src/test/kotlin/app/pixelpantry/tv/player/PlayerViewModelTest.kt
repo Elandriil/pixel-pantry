@@ -175,6 +175,7 @@ class PlayerViewModelTest {
                 PlayerViewModel(
                     api, settings, reporter, toaster, strings, itemId = 4, fromStart = fromStart, port = port,
                     exitScope = exitScope,
+                    reconnect = { reconnects.incrementAndGet(); onReconnect() },
                 ) as T
         }
         return ViewModelProvider(store, factory)[PlayerViewModel::class.java]
@@ -356,6 +357,44 @@ class PlayerViewModelTest {
         assertEquals("Item not found", s.detail)
         assertNull(s.fileName)
         assertTrue(port.prepared.isEmpty())
+    }
+
+    private val reconnects = java.util.concurrent.atomic.AtomicInteger(0)
+    private var onReconnect: () -> Unit = {}
+
+    @Test fun anUnreachableServerOnTheFirstLoadShowsUnreachableWithTheBaseUrl() = playerTest {
+        val live = api.baseUrl
+        api.baseUrl = "http://127.0.0.1:1"
+        val vm = vm()
+        assertEquals(UiState.Unreachable("http://127.0.0.1:1"), vm.state.first { it !is UiState.Loading })
+        assertEquals(0, reconnects.get())
+        assertTrue(port.prepared.isEmpty())
+        api.baseUrl = live
+    }
+
+    @Test fun retryReconnectsOnceThenLoadsTheItemAgainAndPlays() = playerTest {
+        val live = api.baseUrl
+        api.baseUrl = "http://127.0.0.1:1"
+        val vm = vm()
+        vm.state.first { it is UiState.Unreachable }
+        onReconnect = { api.baseUrl = live }
+
+        vm.retry()
+        val s = vm.playing()
+
+        assertEquals(1, reconnects.get())
+        assertEquals(1, requests.count { it == "GET /api/items/4" })
+        assertEquals(listOf("4"), port.prepared.map { it.mediaId })
+        assertFalse(s.paused)
+    }
+
+    @Test fun aRealLoadErrorIsNotRetried() = playerTest {
+        itemBody = { MockResponse().setResponseCode(404).setBody("""{"error":"Item not found"}""") }
+        val vm = vm()
+        vm.state.first { it is UiState.Error }
+        vm.retry()
+        assertTrue(vm.state.value is UiState.Error)
+        assertEquals(0, reconnects.get())
     }
 
     @Test fun overlayAutoHidesFourSecondsAfterTheLastShow() = playerTest {

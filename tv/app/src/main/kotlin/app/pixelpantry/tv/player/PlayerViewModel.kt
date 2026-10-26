@@ -17,6 +17,7 @@ import app.pixelpantry.tv.player.SubtitlePlan.OFF
 import app.pixelpantry.tv.player.ProgressReporter.Reason
 import app.pixelpantry.tv.settings.SettingsRepo
 import app.pixelpantry.tv.ui.components.Toaster
+import app.pixelpantry.tv.ui.components.isUnreachable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -45,6 +46,8 @@ class PlayerViewModel(
     private val port: PlayerPort,
     /** Outlives this view model: the STOP report is sent from here so leaving never waits for the server. */
     private val exitScope: CoroutineScope,
+    /** Resolves the server once more (see `AppContainer.reconnect`); run by [retry]. */
+    private val reconnect: suspend () -> Unit = {},
 ) : ViewModel() {
 
     /** Texts from string resources. */
@@ -85,6 +88,9 @@ class PlayerViewModel(
 
         /** [fileName] is null when the item itself could not be loaded. */
         data class Error(val title: String, val detail: String, val fileName: String?) : UiState
+
+        /** The item could not be loaded because [baseUrl] did not answer at all: Retry / Change server. */
+        data class Unreachable(val baseUrl: String) : UiState
 
         data class Playing(
             val detail: ItemDetail,
@@ -220,18 +226,35 @@ class PlayerViewModel(
         }
     }
 
-    private fun load() {
+    private fun load(beforeFetch: suspend () -> Unit = {}) {
         loadJob = viewModelScope.launch {
+            beforeFetch()
             val d = try {
                 api.item(itemId)
             } catch (e: ApiException) {
-                _state.value = UiState.Error(strings.playbackFailed, e.message.orEmpty(), fileName = null)
+                if (exiting) return@launch
+                _state.value = if (e.isUnreachable()) {
+                    UiState.Unreachable(api.baseUrl)
+                } else {
+                    UiState.Error(strings.playbackFailed, e.message.orEmpty(), fileName = null)
+                }
                 return@launch
             }
             if (exiting) return@launch
             reporter.start(itemId)
             startPlayback(d, fromStart)
         }
+    }
+
+    /**
+     * The Unreachable screen's Retry: resolves the server once more, then loads the item again (a real playback
+     * error keeps its Back-only screen and is not retried).
+     */
+    fun retry() {
+        if (exiting || _state.value !is UiState.Unreachable) return
+        loadJob?.cancel()
+        _state.value = UiState.Loading
+        load(beforeFetch = reconnect)
     }
 
     /** Prepares [d] and plays it from its saved position (0 when [fromStart] or watched), overlay hidden. */
@@ -845,10 +868,11 @@ class PlayerViewModel(
         private val fromStart: Boolean,
         private val port: () -> PlayerPort,
         private val exitScope: CoroutineScope,
+        private val reconnect: suspend () -> Unit,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            PlayerViewModel(api, settingsRepo, reporter(), toaster, strings, itemId, fromStart, port(), exitScope) as T
+            PlayerViewModel(api, settingsRepo, reporter(), toaster, strings, itemId, fromStart, port(), exitScope, reconnect) as T
     }
 
     companion object {

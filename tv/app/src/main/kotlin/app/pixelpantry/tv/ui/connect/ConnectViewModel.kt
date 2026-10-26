@@ -38,7 +38,7 @@ class ConnectViewModel(
     private val verifyScope: CoroutineScope? = null,
     /** Called with `host:port` when the stored address used at startup does not answer as Pixel Pantry. */
     private val onCachedUnreachable: (address: String) -> Unit = {},
-    changeServer: Boolean = false,
+    private val changeServer: Boolean = false,
 ) : ViewModel() {
 
     sealed interface ConnectError {
@@ -52,6 +52,8 @@ class ConnectViewModel(
             val tried: List<String>,
             val manualDraft: String,
             val error: ConnectError? = null,
+            /** Opened by "Change server" (titled so), not because discovery found nothing. */
+            val changingServer: Boolean = false,
         ) : UiState
         data class Ready(val baseUrl: String) : UiState
     }
@@ -68,7 +70,7 @@ class ConnectViewModel(
             val current = api.baseUrl.removePrefix("http://")
             draft = current
             lastTried = listOfNotNull(api.baseUrl.takeIf { it.isNotBlank() })
-            _state.value = UiState.Failed(tried = lastTried, manualDraft = current)
+            _state.value = UiState.Failed(tried = lastTried, manualDraft = current, changingServer = true)
         } else {
             start()
         }
@@ -126,7 +128,7 @@ class ConnectViewModel(
         val address = draft
         val trimmed = address.trim()
         if (!ServerAddress.isValid(trimmed)) {
-            _state.value = UiState.Failed(lastTried, manualDraft = address, error = ConnectError.InvalidAddress)
+            _state.value = UiState.Failed(lastTried, manualDraft = address, error = ConnectError.InvalidAddress, changingServer = changeServer)
             return
         }
         job?.cancel()
@@ -146,7 +148,7 @@ class ConnectViewModel(
                 }
                 ready(url)
             } else {
-                UiState.Failed(lastTried, manualDraft = address, error = ConnectError.Unreachable(trimmed))
+                UiState.Failed(lastTried, manualDraft = address, error = ConnectError.Unreachable(trimmed), changingServer = changeServer)
             }
         }
     }

@@ -14,9 +14,11 @@ fun FocusableButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
+    enabled: Boolean = true,
 ) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = if (focusRequester != null) modifier.focusRequester(focusRequester) else modifier,
     ) {
         Text(label)

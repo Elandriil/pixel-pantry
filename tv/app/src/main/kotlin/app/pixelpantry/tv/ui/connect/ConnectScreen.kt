@@ -96,7 +96,7 @@ private fun NotFound(
     val secondary = MaterialTheme.colorScheme.onSurfaceVariant
 
     Text(
-        stringResource(R.string.connect_not_found),
+        stringResource(if (state.changingServer) R.string.connect_change_server else R.string.connect_not_found),
         style = MaterialTheme.typography.headlineSmall,
         color = MaterialTheme.colorScheme.onBackground,
     )

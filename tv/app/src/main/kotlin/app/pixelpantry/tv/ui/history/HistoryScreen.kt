@@ -197,7 +197,7 @@ private fun EntryRow(row: HistoryRow, onClick: () -> Unit, modifier: Modifier = 
             val item = row.item
             RemoteImage(
                 path = item.still ?: item.backdrop ?: item.poster,
-                fallbackText = null,
+                fallbackText = item.showTitle ?: item.title,
                 modifier = Modifier.width(120.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)),
             )
             Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {

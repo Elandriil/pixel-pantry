@@ -43,13 +43,15 @@ import app.pixelpantry.tv.ui.components.ButtonSpec
 import app.pixelpantry.tv.ui.components.ErrorScreen
 import app.pixelpantry.tv.ui.components.LoadingScreen
 import app.pixelpantry.tv.ui.components.Spinner
+import app.pixelpantry.tv.ui.components.UnreachableScreen
 
 /**
- * Full-screen playback: video, the overlay on demand, a buffering spinner, or the error screen. [onExit] leaves
+ * Full-screen playback: video, the overlay on demand, a buffering spinner, the error screen, or the Unreachable
+ * screen when the item could not be loaded at all. [onExit] leaves
  * the screen; it is called once, as soon as an exit was requested and this screen's entry is resumed.
  */
 @Composable
-fun PlayerScreen(vm: PlayerViewModel, onExit: () -> Unit) {
+fun PlayerScreen(vm: PlayerViewModel, onExit: () -> Unit, onChangeServer: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     val exitRequested by vm.exitRequested.collectAsState()
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
@@ -91,6 +93,7 @@ fun PlayerScreen(vm: PlayerViewModel, onExit: () -> Unit) {
                 detail = listOfNotNull(current.detail, current.fileName).joinToString("\n"),
                 primary = ButtonSpec(stringResource(R.string.player_back), vm::stopAndExit),
             )
+            is UiState.Unreachable -> UnreachableScreen(current.baseUrl, onRetry = vm::retry, onChangeServer = onChangeServer)
             is UiState.Playing -> Playback(
                 state = current,
                 exoPlayer = vm.exoPlayer,

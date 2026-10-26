@@ -70,7 +70,9 @@ adb exec-out screencap -p > shot.png
    `-s <tv-ip>:5555` added because the emulator may be attached too.
 4. Pixel Pantry appears in the TV's app row (leanback banner). On first start it finds the server by mDNS, or asks
    for `host:port`; after that it starts straight on Home with the stored address and checks it in the background
-   (a toast says so if the server does not answer; every page then offers Retry / Change server).
+   (a toast says so if the server does not answer). A page that already shows content keeps it when a refresh
+   fails and only toasts "Could not refresh"; a page (or the player) that has nothing loaded yet shows "Cannot
+   reach the server" with Retry / Change server.
 
 ### First-run checklist on the TV (not covered by the emulator)
 

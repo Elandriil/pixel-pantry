@@ -226,9 +226,16 @@ class ConnectViewModelTest {
         api.baseUrl = "http://10.0.0.5:8765"
         val locator = FakeLocator()
         val vm = connect(locator, changeServer = true)
-        assertEquals(UiState.Failed(tried = listOf("http://10.0.0.5:8765"), manualDraft = "10.0.0.5:8765"), vm.state.value)
+        assertEquals(
+            UiState.Failed(tried = listOf("http://10.0.0.5:8765"), manualDraft = "10.0.0.5:8765", changingServer = true),
+            vm.state.value,
+        )
         assertEquals(0, locator.calls)
         assertEquals(0, server.requestCount)
+
+        vm.onDraftChange("bad")
+        vm.submitManual()
+        assertEquals("still titled Change server", true, (vm.state.value as UiState.Failed).changingServer)
 
         replyInfo()
         vm.onDraftChange(serverAddress)

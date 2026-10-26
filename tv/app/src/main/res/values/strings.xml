@@ -16,6 +16,7 @@
     <string name="connect_looking">Looking for Pixel Pantry on your network…</string>
     <string name="connect_trying">Trying %1$s</string>
     <string name="connect_not_found">Could not find the server</string>
+    <string name="connect_change_server">Change server</string>
     <string name="connect_tried">Addresses tried:</string>
     <string name="connect_tried_none">No Pixel Pantry server announced itself on the network.</string>
     <string name="connect_tried_item">• %1$s</string>

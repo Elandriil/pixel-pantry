@@ -127,9 +127,11 @@ fun ShowScreen(vm: ShowViewModel, onNavigate: (NavEvent) -> Unit, onChangeServer
 private fun DetailPage(state: UiState.Loaded, vm: ShowViewModel) {
     var menu by remember { mutableStateOf<MenuTarget?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val deleting by vm.deleting.collectAsStateWithLifecycle()
 
     Page(
         state = state,
+        deleting = deleting,
         onPrimary = vm::primaryAction,
         onSecondary = { vm.markSeasonWatched(state.selectedSeason, !state.seasonWatched) },
         onMore = { menu = MenuTarget.Page },
@@ -184,6 +186,7 @@ private fun DetailPage(state: UiState.Loaded, vm: ShowViewModel) {
 @Composable
 private fun Page(
     state: UiState.Loaded,
+    deleting: Boolean,
     onPrimary: () -> Unit,
     onSecondary: () -> Unit,
     onMore: () -> Unit,
@@ -212,6 +215,7 @@ private fun Page(
                     Backdrop(state.show?.backdrop ?: state.movie?.backdrop, Modifier.fillMaxWidth().height(backdropHeight))
                     Header(
                         state = state,
+                        deleting = deleting,
                         primaryFocus = primaryFocus,
                         onPrimary = onPrimary,
                         onSecondary = onSecondary,
@@ -261,6 +265,7 @@ private fun Backdrop(path: String?, modifier: Modifier) {
 @Composable
 private fun Header(
     state: UiState.Loaded,
+    deleting: Boolean,
     primaryFocus: FocusRequester,
     onPrimary: () -> Unit,
     onSecondary: () -> Unit,
@@ -297,8 +302,10 @@ private fun Header(
                 )
             }
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                FocusableButton(state.primaryLabel, onPrimary, focusRequester = primaryFocus)
-                state.secondaryLabel?.let { FocusableButton(it, onSecondary) }
+                // Disabled while a delete runs (and until the page closes after one): the files are going away.
+                // The ⋯ button stays enabled, it holds focus after the confirm dialog; its actions are ignored.
+                FocusableButton(state.primaryLabel, onPrimary, focusRequester = primaryFocus, enabled = !deleting)
+                state.secondaryLabel?.let { FocusableButton(it, onSecondary, enabled = !deleting) }
                 FocusableButton(stringResource(R.string.show_more), onMore)
             }
         }
