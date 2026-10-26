@@ -1,0 +1,76 @@
+import { expect, test } from "bun:test";
+import { TmdbClient } from "../src/metadata/tmdb";
+import type { FetchFn } from "../src/types";
+
+function setup(body: unknown, status = 200, apiKey = "KEY") {
+  const urls: string[] = [];
+  const headers: Headers[] = [];
+  const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    urls.push(String(input));
+    headers.push(new Headers(init?.headers));
+    return new Response(JSON.stringify(body), { status });
+  }) as FetchFn;
+  const store = new Map<string, string>();
+  const cache = {
+    get: (key: string) => store.get(key) ?? null,
+    set: (key: string, json: string) => void store.set(key, json),
+  };
+  return { urls, headers, store, client: new TmdbClient({ apiKey, fetchFn, cache }) };
+}
+
+test("searchTv requests the right URL and normalises results", async () => {
+  const { urls, client } = setup({
+    results: [{ id: 1, name: "Severance", first_air_date: "2022-02-18", popularity: 50 }],
+  });
+  const r = await client.searchTv("Severance", 2022);
+  expect(urls).toEqual([
+    "https://api.themoviedb.org/3/search/tv?query=Severance&first_air_date_year=2022&api_key=KEY",
+  ]);
+  expect(r).toEqual([{ id: 1, title: "Severance", year: 2022, popularity: 50 }]);
+});
+
+test("searchMovie omits year when null and normalises missing fields", async () => {
+  const { urls, client } = setup({ results: [{ id: 2, title: "Heat", release_date: "" }] });
+  const r = await client.searchMovie("Heat", null);
+  expect(urls[0]).toBe("https://api.themoviedb.org/3/search/movie?query=Heat&api_key=KEY");
+  expect(r).toEqual([{ id: 2, title: "Heat", year: null, popularity: 0 }]);
+});
+
+test("movie search uses year param", async () => {
+  const { urls, client } = setup({ results: [] });
+  await client.searchMovie("Dune", 2024);
+  expect(urls[0]).toContain("/3/search/movie?query=Dune&year=2024&api_key=KEY");
+});
+
+test("second identical call is served from cache", async () => {
+  const { urls, store, client } = setup({ results: [] });
+  await client.searchTv("Severance", 2022);
+  await client.searchTv("Severance", 2022);
+  expect(urls.length).toBe(1);
+  expect([...store.keys()]).toEqual(["/3/search/tv?query=Severance&first_air_date_year=2022"]);
+});
+
+test("bearer header used for eyJ keys, no api_key param", async () => {
+  const { urls, headers, client } = setup({ results: [] }, 200, "eyJtoken");
+  await client.searchTv("X", null);
+  expect(headers[0].get("authorization")).toBe("Bearer eyJtoken");
+  expect(urls[0]).not.toContain("api_key");
+});
+
+test("non-2xx throws with status", async () => {
+  const { client } = setup({ status_message: "nope" }, 401);
+  await expect(client.tvDetails(1)).rejects.toThrow(/^TMDB 401: /);
+});
+
+test("empty key throws", async () => {
+  const { client } = setup({}, 200, "");
+  await expect(client.tvDetails(1)).rejects.toThrow("TMDB API key not set");
+});
+
+test("details and season endpoints", async () => {
+  const { urls, client } = setup({ id: 5 });
+  await client.tvDetails(5);
+  await client.tvSeason(5, 2);
+  await client.movieDetails(7);
+  expect(urls.map((u) => new URL(u).pathname)).toEqual(["/3/tv/5", "/3/tv/5/season/2", "/3/movie/7"]);
+});
