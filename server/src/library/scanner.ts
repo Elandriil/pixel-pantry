@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Logger } from "../log";
 import { absoluteToSeasonEpisode } from "../metadata/anime";
 import { pickMatch } from "../metadata/matcher";
-import type { TmdbClient } from "../metadata/tmdb";
+import type { TmdbClient, TmdbTvDetails } from "../metadata/tmdb";
 import { parseVideoPath, type ParsedVideo } from "./parse";
 import type { ProbeResult } from "./probe";
 import type { FileRow, ItemRow, Repo, ShowRow } from "./repo";
@@ -37,6 +37,7 @@ interface LiveFile {
 
 const CATEGORIES = ["tv", "anime", "movies"] as const;
 const MATCH_RETRY_MS = 24 * 60 * 60 * 1000;
+const REFRESH_MS = 7 * MATCH_RETRY_MS;
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 /**
@@ -232,6 +233,10 @@ export class Scanner {
       show = repo.getShow(showId)!;
     }
     show = this.mergeIntoCanonical(show);
+    if (show.tmdb_id !== null && this.metadataStale(show)) {
+      await this.refreshShow(show, show.tmdb_id);
+      show = repo.getShow(show.id)!;
+    }
 
     const counts =
       show.tmdb_id === null
@@ -294,29 +299,46 @@ export class Scanner {
         repo.setShowMatchError(show.id, "No TMDB match", this.now());
         return;
       }
-      const d = await tmdb.tvDetails(tmdbId);
-      repo.updateShowMeta(show.id, {
-        tmdb_id: d.id,
-        title: d.name,
-        year: yearOf(d.first_air_date),
-        overview: d.overview,
-        poster_path: d.poster_path,
-        backdrop_path: d.backdrop_path,
-        rating: d.vote_average,
-        genres: genreJson(d.genres),
-        first_air_date: d.first_air_date,
-      });
-      for (const s of d.seasons) {
-        repo.upsertSeason(show.id, s.season_number, {
-          name: s.name,
-          poster_path: s.poster_path,
-          episode_count: s.episode_count,
-        });
-      }
+      this.applyTvDetails(show.id, await tmdb.tvDetails(tmdbId));
       repo.setShowMatchError(show.id, matchNote, this.now());
     } catch (err) {
       log.warn("tmdb show match failed", { key: show.parsed_key, error: message(err) });
       repo.setShowMatchError(show.id, message(err), isNotFound(err) ? this.now() : show.match_attempted_at);
+    }
+  }
+
+  private applyTvDetails(showId: number, d: TmdbTvDetails): void {
+    const { repo } = this.deps;
+    repo.updateShowMeta(showId, {
+      tmdb_id: d.id,
+      title: d.name,
+      year: yearOf(d.first_air_date),
+      overview: d.overview,
+      poster_path: d.poster_path,
+      backdrop_path: d.backdrop_path,
+      rating: d.vote_average,
+      genres: genreJson(d.genres),
+      first_air_date: d.first_air_date,
+    });
+    for (const s of d.seasons) {
+      repo.upsertSeason(showId, s.season_number, { name: s.name, poster_path: s.poster_path, episode_count: s.episode_count });
+    }
+  }
+
+  /** A matched show's TMDB details (new seasons, artwork, rating) are refetched once a week. */
+  private metadataStale(show: ShowRow): boolean {
+    return show.match_attempted_at === null || this.now() - show.match_attempted_at >= REFRESH_MS;
+  }
+
+  private async refreshShow(show: ShowRow, tmdbId: number): Promise<void> {
+    const { repo, tmdb, log } = this.deps;
+    try {
+      this.applyTvDetails(show.id, await tmdb.tvDetails(tmdbId));
+      // keeps a low-confidence note: refreshing does not make the match any more certain
+      repo.setShowMatchError(show.id, show.match_error, this.now());
+    } catch (err) {
+      log.warn("tmdb show refresh failed", { key: show.parsed_key, error: message(err) });
+      if (isNotFound(err)) repo.setShowMatchError(show.id, show.match_error, this.now());
     }
   }
 

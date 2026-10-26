@@ -352,6 +352,62 @@ test("two parsed keys matching the same TMDB show end up as one show with all ep
   expect(ctx.repo.listEpisodes(shows[0]!.id).map((e) => e.episode_number)).toEqual([1, 2, 3]);
 });
 
+test("a show matched 8 days ago refetches its TMDB details and gains the new season", async () => {
+  const ctx = setup();
+  ctx.tmdb.tvSearchResults = [{ id: 95396, title: "Severance", originalTitle: null, year: 2022, popularity: 50 }];
+  ctx.tmdb.tvDetailsById[95396] = tvDetails(95396, "Severance", [[1, 9]]);
+  ctx.tmdb.seasonsByIdAndNumber["95396:1"] = season(1, [1], 1000);
+  ctx.file("tv/Severance/Season 01/Severance S01E01.mkv");
+  await ctx.scanner.scan();
+  const show = ctx.repo.getShowByKey("tv:severance:")!;
+  expect(ctx.tmdb.calls.tvDetails).toBe(1);
+
+  ctx.clock.t += 6 * DAY;
+  await ctx.scanner.scan();
+  expect(ctx.tmdb.calls.tvDetails).toBe(1);
+
+  ctx.tmdb.tvDetailsById[95396] = { ...tvDetails(95396, "Severance", [[1, 9], [2, 10]]), vote_average: 9.1 };
+  ctx.tmdb.seasonsByIdAndNumber["95396:2"] = season(2, [1], 2000);
+  ctx.file("tv/Severance/Season 02/Severance S02E01.mkv");
+  ctx.clock.t += 2 * DAY;
+  await ctx.scanner.scan();
+  expect(ctx.tmdb.calls.tvDetails).toBe(2);
+  expect(ctx.tmdb.calls.searchTv).toBe(1);
+  const after = ctx.repo.getShow(show.id)!;
+  expect(after.rating).toBe(9.1);
+  expect(after.match_attempted_at).toBe(ctx.clock.t);
+  expect(ctx.repo.listSeasons(show.id).map((s) => [s.number, s.episode_count])).toEqual([[1, 9], [2, 10]]);
+  expect(ctx.repo.getEpisode(show.id, 2, 1)!.tmdb_id).toBe(2001);
+});
+
+test("a refresh keeps a low-confidence note", async () => {
+  const ctx = setup();
+  ctx.tmdb.tvSearchResults = [{ id: 1, title: "Something Else", originalTitle: null, year: null, popularity: 1 }];
+  ctx.tmdb.tvDetailsById[1] = tvDetails(1, "Something Else", [[1, 3]]);
+  ctx.file("tv/Odd/Season 01/Odd S01E01.mkv");
+  await ctx.scanner.scan();
+  ctx.clock.t += 8 * DAY;
+  await ctx.scanner.scan();
+  expect(ctx.tmdb.calls.tvDetails).toBe(2);
+  expect(ctx.repo.getShowByKey("tv:odd:")!.match_error).toBe("Low-confidence match: Something Else");
+});
+
+test("an episode TMDB lists later is filled in on the next day's scan", async () => {
+  const ctx = setup();
+  severance(ctx);
+  ctx.tmdb.seasonsByIdAndNumber["95396:2"] = season(2, [1, 2, 3, 4], 1000); // E05 not listed yet
+  await ctx.scanner.scan();
+  const show = ctx.repo.getShowByKey("tv:severance:")!;
+  expect(ctx.repo.getEpisode(show.id, 2, 5)!.tmdb_id).toBeNull();
+
+  ctx.tmdb.seasonsByIdAndNumber["95396:2"] = season(2, [1, 2, 3, 4, 5], 1000);
+  ctx.clock.t += DAY;
+  await ctx.scanner.scan();
+  const e5 = ctx.repo.getEpisode(show.id, 2, 5)!;
+  expect(e5.tmdb_id).toBe(1005);
+  expect(e5.title).toBe("Ep title 5");
+});
+
 test("unparseable file still becomes an item under folder title", async () => {
   const ctx = setup();
   const rel = ctx.file("tv/Weird Folder/clip.mkv");

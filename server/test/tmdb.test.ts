@@ -111,3 +111,16 @@ test("an abort error from fetch is reported as TMDB timeout", async () => {
   const client = new TmdbClient({ apiKey: "K", fetchFn, cache: { get: () => null, set: () => {} }, timeoutMs: 20 });
   await expect(client.searchTv("x")).rejects.toThrow("TMDB timeout");
 });
+
+test("TV details and seasons are cached for 12 h, searches and movies for the configured age", async () => {
+  const ages: [string, number][] = [];
+  const fetchFn = (async () => new Response(JSON.stringify({ results: [] }))) as unknown as FetchFn;
+  const cache = { get: (key: string, maxAgeMs: number) => (ages.push([key, maxAgeMs]), null), set: () => {} };
+  const client = new TmdbClient({ apiKey: "K", fetchFn, cache });
+  await client.tvDetails(1);
+  await client.tvSeason(1, 2);
+  await client.movieDetails(3);
+  await client.searchTv("x");
+  const H = 60 * 60 * 1000;
+  expect(ages).toEqual([["/3/tv/1", 12 * H], ["/3/tv/1/season/2", 12 * H], ["/3/movie/3", 168 * H], ["/3/search/tv?query=x", 168 * H]]);
+});

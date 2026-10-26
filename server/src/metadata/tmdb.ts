@@ -3,6 +3,11 @@ import { resolve, type FetchFn, type Lazy } from "../types";
 
 const BASE = "https://api.themoviedb.org";
 const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * TV details and seasons change while a show airs. The scanner retries missing episodes daily and refreshes
+ * shows weekly, so these are cached for less than a day or the retry would only see the cached answer.
+ */
+const TV_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 export type TmdbSearchResult = {
   id: number;
@@ -89,11 +94,11 @@ export class TmdbClient {
   }
 
   tvDetails(id: number): Promise<TmdbTvDetails> {
-    return this.get(`/3/tv/${id}`);
+    return this.get(`/3/tv/${id}`, Math.min(this.maxAgeMs, TV_MAX_AGE_MS));
   }
 
   tvSeason(id: number, season: number): Promise<TmdbSeason> {
-    return this.get(`/3/tv/${id}/season/${season}`);
+    return this.get(`/3/tv/${id}/season/${season}`, Math.min(this.maxAgeMs, TV_MAX_AGE_MS));
   }
 
   movieDetails(id: number): Promise<TmdbMovieDetails> {
@@ -122,10 +127,10 @@ export class TmdbClient {
     });
   }
 
-  private async get<T>(path: string): Promise<T> {
+  private async get<T>(path: string, maxAgeMs = this.maxAgeMs): Promise<T> {
     const apiKey = resolve(this.apiKey);
     if (!apiKey) throw new Error("TMDB API key not set");
-    const cached = this.cache.get(path, this.maxAgeMs);
+    const cached = this.cache.get(path, maxAgeMs);
     if (cached !== null) return JSON.parse(cached) as T;
 
     const bearer = apiKey.startsWith("eyJ");
