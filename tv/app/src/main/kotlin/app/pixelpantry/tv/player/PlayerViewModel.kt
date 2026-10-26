@@ -393,8 +393,9 @@ class PlayerViewModel(
     }
 
     /**
-     * Shows subtitle [id] (or [SubtitlePlan.OFF]) and saves the choice for the next play. An embedded track or
-     * off only changes the track selection; a sidecar re-prepares the item at the current position (same
+     * Shows subtitle [id] (or [SubtitlePlan.OFF]) and saves the choice for the next play. An embedded track, off,
+     * or a sidecar the prepared item already carries unshifted only changes the track selection; a sidecar it
+     * does not carry (just downloaded) or one to shift re-prepares the item at the current position (same
      * progress session, still playing if it was). Choosing another track resets the delay.
      */
     fun selectSubtitle(id: String) {
@@ -405,13 +406,34 @@ class PlayerViewModel(
         delayJob?.cancel()
         val delay = if (id == s.subtitleChoice) s.subDelayMs else 0
         updatePlaying { it.copy(subtitleChoice = id, subtitleLabel = subtitleLabel(d, id), subDelayMs = delay) }
-        if (SubtitlePlan.isSidecar(id)) {
+        if (SubtitlePlan.isSidecar(id) && !loadedUnshifted(d, id, delay)) {
             reprepare(d, id, delay)
         } else {
+            // The prepared item carries it as is: selecting its text group is enough (I5).
+            if (SubtitlePlan.isSidecar(id)) markSelectedInPlan(id)
             pendingText = id
             applyPendingTracks()
         }
         persistChoice()
+    }
+
+    /** The prepared item carries sidecar [id] without a shift, and none is wanted ([delay] 0). */
+    private fun loadedUnshifted(d: ItemDetail, id: String, delay: Int): Boolean {
+        if (delay != 0) return false
+        val url = d.subtitles.firstOrNull { it.id == id }?.url ?: return false
+        val config = currentPlan?.subtitleConfigs?.firstOrNull { it.id == id } ?: return false
+        return config.uri == api.resolve(url)
+    }
+
+    /** Records [id] as the chosen sidecar in [currentPlan]; its URIs (the prepared item's) stay as they are. */
+    private fun markSelectedInPlan(id: String) {
+        val plan = currentPlan ?: return
+        val configs = plan.subtitleConfigs.map { it.copy(selected = it.id == id) }
+        currentPlan = plan.copy(
+            subtitleConfigs = configs,
+            selectedEmbeddedIndex = null,
+            selectedSidecarUri = configs.firstOrNull { it.selected }?.uri,
+        )
     }
 
     /** Plays audio track `audio:<index>` and saves the choice. */

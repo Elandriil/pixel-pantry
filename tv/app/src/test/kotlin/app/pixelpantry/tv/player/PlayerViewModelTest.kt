@@ -1109,7 +1109,8 @@ class PlayerViewModelTest {
         assertEquals("English", vm.current().subtitleLabel)
     }
 
-    @Test fun selectSubtitleSidecarRepreparesAtThePositionAndPersists() = playerTest {
+    @Test fun selectSubtitleLoadedSidecarSwitchesTheTrackOnlyAndPersists() = playerTest {
+        // I5: the prepared item carries every sidecar, so picking one unshifted re-prepares nothing.
         itemBody = subtitledItem()
         val vm = vm()
         vm.playing()
@@ -1118,21 +1119,36 @@ class PlayerViewModelTest {
         port.position = 812_000
         val before = port.calls.size
         vm.selectSubtitle(sidecarEn)
-        assertEquals(listOf("prepare", "play"), port.calls.drop(before))
-        assertEquals(812_000L, port.preparedAt.last())
-        assertTrue("no seek to the start", port.seeks.none { it == 0L })
+        assertEquals("no prepare, no seek, no play", emptyList<String>(), port.calls.drop(before))
+        assertEquals(3, port.textSelections.last())
         assertEquals(sidecarEn, vm.currentPlan!!.subtitleConfigs.single { it.selected }.id)
         assertEquals(server.url("/api/items/4/subtitles/sidecar/Severance%20S01E01.en.srt").toString(), vm.currentPlan!!.selectedSidecarUri)
         assertEquals(sidecarEn, vm.current().subtitleChoice)
         assertEquals("English", vm.current().subtitleLabel)
         assertEquals(4, vm.currentItemId)
 
-        tracksArrive(sidecarEn) // the re-prepared item's tracks
-        assertEquals(3, port.textSelections.last())
         awaitRealTime { trackPosts.isNotEmpty() }
         val body = trackPosts.single()
         assertEquals(sidecarEn, body["subtitle"]!!.jsonPrimitive.content)
         assertEquals("audio:1", body["audio"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun selectingASecondLoadedSidecarPreparesNothing() = playerTest {
+        itemBody = { json(itemFixture(progress = """{"position":754.5,"duration":3000,"watched":false}""",
+            subtitles = "[$EMBEDDED_3,$SIDECAR_EN,$DOWNLOADED]", subtitleChoice = sidecarEn)) }
+        val vm = vm()
+        vm.playing()
+        tracksArrive(sidecarEn, downloaded)
+        assertEquals(3, port.textSelections.last())
+        val prepares = port.prepared.size
+        vm.selectSubtitle(downloaded)
+        assertEquals(prepares, port.prepared.size)
+        assertEquals(4, port.textSelections.last())
+        assertEquals(downloaded, vm.current().subtitleChoice)
+        // And back again.
+        vm.selectSubtitle(sidecarEn)
+        assertEquals(prepares, port.prepared.size)
+        assertEquals(3, port.textSelections.last())
     }
 
     @Test fun selectSubtitleWhilePausedStaysPaused() = playerTest {
@@ -1142,6 +1158,11 @@ class PlayerViewModelTest {
         vm.togglePause()
         val before = port.calls.size
         vm.selectSubtitle(sidecarEn)
+        assertEquals("a loaded sidecar re-prepares nothing (I5)", emptyList<String>(), port.calls.drop(before))
+        assertTrue(vm.current().paused)
+        // A shift does re-prepare, and the player stays paused.
+        vm.adjustSubDelay(+500)
+        advanceTimeBy(PlayerViewModel.SUB_DELAY_DEBOUNCE_MS + 1)
         assertEquals(listOf("prepare"), port.calls.drop(before))
         assertTrue(vm.current().paused)
     }
