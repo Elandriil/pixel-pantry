@@ -4,14 +4,15 @@ import { join } from "node:path";
 import { openDb } from "../src/db/db";
 import type { ProbeResult } from "../src/library/probe";
 import { Repo } from "../src/library/repo";
-import { Scanner } from "../src/library/scanner";
+import { Scanner, type TmdbLike } from "../src/library/scanner";
 import { Logger } from "../src/log";
-import type { TmdbSeason, TmdbTvDetails } from "../src/metadata/tmdb";
+import { TmdbClient, type TmdbSeason, type TmdbTvDetails } from "../src/metadata/tmdb";
+import type { FetchFn } from "../src/types";
 import { fakeProbe, fakeTmdb, tmpDir, touch } from "./helpers";
 
 const DAY = 24 * 60 * 60 * 1000;
 
-function setup(opts: { root?: string; probe?: (absPath: string) => Promise<ProbeResult> } = {}) {
+function setup(opts: { root?: string; probe?: (absPath: string) => Promise<ProbeResult>; tmdb?: TmdbLike } = {}) {
   const root = opts.root ?? tmpDir();
   const repo = new Repo(openDb(":memory:"));
   const tmdb = fakeTmdb();
@@ -19,7 +20,7 @@ function setup(opts: { root?: string; probe?: (absPath: string) => Promise<Probe
   const clock = { t: 1_700_000_000_000 };
   const scanner = new Scanner({
     repo,
-    tmdb,
+    tmdb: opts.tmdb ?? tmdb,
     probe: opts.probe ?? probe.probe,
     mediaRoot: () => root,
     log: new Logger(join(tmpDir(), "pantry.log")),
@@ -209,7 +210,7 @@ test("anime absolute without TMDB falls back to season 1", async () => {
   expect(ctx.tmdb.calls.tvSeason).toBe(0);
 });
 
-test("tmdb failure leaves show unmatched with match_error and scan finishes", async () => {
+test("tmdb failure leaves show unmatched with match_error, scan finishes, and the next scan retries", async () => {
   const ctx = setup();
   ctx.tmdb.searchTv = async () => {
     ctx.tmdb.calls.searchTv++;
@@ -228,22 +229,71 @@ test("tmdb failure leaves show unmatched with match_error and scan finishes", as
   const show = ctx.repo.getShowByKey("tv:severance:")!;
   expect(show.tmdb_id).toBeNull();
   expect(show.match_error).toBe("TMDB 401");
-  expect(show.match_attempted_at).toBe(ctx.clock.t);
+  expect(show.match_attempted_at).toBeNull();
   expect(ctx.repo.getFileByPath(rel)!.item_id).toBe(ctx.repo.getEpisode(show.id, 2, 4)!.id);
   const m = ctx.repo.getMovieByKey("movies:heat:1995")!;
   expect(m.tmdb_id).toBeNull();
   expect(m.match_error).toBe("TMDB 401");
+  expect(m.match_attempted_at).toBeNull();
   expect(ctx.repo.getFileByPath(movie)!.item_id).toBe(m.id);
 
-  // within 24 h: no retry; after 24 h: retried
-  ctx.clock.t += DAY - 1;
-  await ctx.scanner.scan();
-  expect(ctx.tmdb.calls.searchTv).toBe(1);
-  expect(ctx.tmdb.calls.searchMovie).toBe(1);
-  ctx.clock.t += 2;
+  // an auth failure is not backed off: a scan a minute later retries
+  ctx.clock.t += 60_000;
   await ctx.scanner.scan();
   expect(ctx.tmdb.calls.searchTv).toBe(2);
   expect(ctx.tmdb.calls.searchMovie).toBe(2);
+});
+
+test("no TMDB match is backed off for 24 h", async () => {
+  const ctx = setup();
+  ctx.tmdb.tvSearchResults = [];
+  ctx.file("tv/Andor/Season 01/Andor S01E01.mkv");
+  await ctx.scanner.scan();
+  const show = ctx.repo.getShowByKey("tv:andor:")!;
+  expect(show.match_error).toBe("No TMDB match");
+  expect(show.match_attempted_at).toBe(ctx.clock.t);
+
+  ctx.clock.t += DAY - 1;
+  await ctx.scanner.scan();
+  expect(ctx.tmdb.calls.searchTv).toBe(1);
+  ctx.clock.t += 2;
+  await ctx.scanner.scan();
+  expect(ctx.tmdb.calls.searchTv).toBe(2);
+});
+
+test("a scan without a TMDB key retries as soon as the key is set", async () => {
+  let key = "";
+  const paths: string[] = [];
+  const bodies: Record<string, unknown> = {
+    "/3/search/tv": { results: [{ id: 95396, name: "Severance", first_air_date: "2022-02-18", popularity: 50 }] },
+    "/3/tv/95396": tvDetails(95396, "Severance", [[1, 9]]),
+    "/3/tv/95396/season/1": season(1, [1, 2], 1000),
+  };
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const path = new URL(String(input)).pathname;
+    paths.push(path);
+    const body = bodies[path];
+    return body ? new Response(JSON.stringify(body)) : new Response("{}", { status: 404 });
+  }) as FetchFn;
+  const tmdb = new TmdbClient({ apiKey: () => key, fetchFn, cache: { get: () => null, set: () => {} } });
+  const ctx = setup({ tmdb });
+  ctx.file("tv/Severance/Season 01/Severance S01E01.mkv");
+
+  await ctx.scanner.scan();
+  const before = ctx.repo.getShowByKey("tv:severance:")!;
+  expect(before.tmdb_id).toBeNull();
+  expect(before.match_error).toBe("TMDB API key not set");
+  expect(before.match_attempted_at).toBeNull();
+  expect(paths).toEqual([]);
+
+  key = "KEY";
+  ctx.clock.t += 60_000;
+  await ctx.scanner.scan();
+  expect(paths[0]).toBe("/3/search/tv");
+  const after = ctx.repo.getShowByKey("tv:severance:")!;
+  expect(after.tmdb_id).toBe(95396);
+  expect(after.match_error).toBeNull();
+  expect(ctx.repo.getEpisode(after.id, 1, 1)!.tmdb_id).toBe(1001);
 });
 
 test("unparseable file still becomes an item under folder title", async () => {

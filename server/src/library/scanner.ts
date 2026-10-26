@@ -38,6 +38,11 @@ interface LiveFile {
 const MATCH_RETRY_MS = 24 * 60 * 60 * 1000;
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+/**
+ * Only "TMDB knows nothing" (404) is worth backing off for 24 h. A missing key, auth failures, network
+ * errors, timeouts and 5xx are transient or fixable by the user, so the next scan retries.
+ */
+const isNotFound = (err: unknown): boolean => message(err).startsWith("TMDB 404");
 const yearOf = (date: string | null | undefined): number | null => {
   const y = date ? Number.parseInt(date.slice(0, 4), 10) : Number.NaN;
   return Number.isNaN(y) ? null : y;
@@ -281,7 +286,7 @@ export class Scanner {
       repo.setShowMatchError(show.id, null, this.now());
     } catch (err) {
       log.warn("tmdb show match failed", { key: show.parsed_key, error: message(err) });
-      repo.setShowMatchError(show.id, message(err), this.now());
+      repo.setShowMatchError(show.id, message(err), isNotFound(err) ? this.now() : show.match_attempted_at);
     }
   }
 
@@ -342,6 +347,7 @@ export class Scanner {
   private async fetchSeasonMeta(show: ShowRow, tmdbId: number, season: number, itemIds: Set<number>): Promise<void> {
     const { repo, tmdb, log } = this.deps;
     let missing = "Not on TMDB";
+    let backOff = true;
     try {
       const s = await tmdb.tvSeason(tmdbId, season);
       for (const ep of s.episodes) {
@@ -358,10 +364,12 @@ export class Scanner {
       }
     } catch (err) {
       missing = message(err);
+      backOff = isNotFound(err);
       log.warn("tmdb season fetch failed", { key: show.parsed_key, season, error: missing });
     }
     for (const id of itemIds) {
-      if (repo.getItem(id)!.tmdb_id === null) repo.setItemMatchError(id, missing, this.now());
+      const item = repo.getItem(id)!;
+      if (item.tmdb_id === null) repo.setItemMatchError(id, missing, backOff ? this.now() : item.match_attempted_at);
     }
   }
 
@@ -410,7 +418,7 @@ export class Scanner {
       repo.setItemMatchError(item.id, null, this.now());
     } catch (err) {
       log.warn("tmdb movie match failed", { key, error: message(err) });
-      repo.setItemMatchError(item.id, message(err), this.now());
+      repo.setItemMatchError(item.id, message(err), isNotFound(err) ? this.now() : item.match_attempted_at);
     }
   }
 }

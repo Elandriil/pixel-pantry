@@ -150,6 +150,8 @@ export class Repo {
       episodesResetMatch: p(
         "UPDATE items SET tmdb_id = NULL, match_attempted_at = NULL, match_error = NULL WHERE show_id = ?",
       ),
+      showsResetUnmatched: p("UPDATE shows SET match_attempted_at = NULL, match_error = NULL WHERE tmdb_id IS NULL"),
+      itemsResetUnmatched: p("UPDATE items SET match_attempted_at = NULL, match_error = NULL WHERE tmdb_id IS NULL"),
       unmatchedShows: p(
         `SELECT s.*, (SELECT COUNT(*) FROM files f JOIN items i ON i.id = f.item_id
            WHERE i.show_id = s.id AND f.deleted_at IS NULL AND i.deleted_at IS NULL) AS file_count
@@ -347,6 +349,14 @@ export class Repo {
   /** Clears the TMDB match state of every episode of a show so a rematch refetches season metadata. */
   resetShowEpisodesMatch(showId: number): void {
     this.q.episodesResetMatch!.run(showId);
+  }
+
+  /** Clears the match back-off of every show, movie and episode without a TMDB id so the next scan retries it. */
+  resetUnmatchedAttempts(): void {
+    this.db.transaction(() => {
+      this.q.showsResetUnmatched!.run();
+      this.q.itemsResetUnmatched!.run();
+    })();
   }
 
   /** Live shows without a TMDB id, each with its live file count. */

@@ -109,6 +109,32 @@ test("config PUT with a new mediaRoot saves it and triggers a scan; port change 
   expect(scan).toHaveBeenCalledTimes(1);
 });
 
+test("config PUT with a new TMDB key resets unmatched attempts and triggers a scan", async () => {
+  const deps = makeDeps();
+  const unmatched = seedShow(deps.repo, { title: "Mystery", category: "tv", seasons: [[1]] });
+  deps.repo.setShowMatchError(unmatched.showId, "No TMDB match", 10);
+  const movieId = seedMovie(deps.repo, "Odd Film");
+  deps.repo.setItemMatchError(movieId, "TMDB 401", 10);
+  const matched = seedShow(deps.repo, { title: "Known", category: "tv", seasons: [[1]] });
+  deps.repo.updateShowMeta(matched.showId, { tmdb_id: 42 });
+  deps.repo.setShowMatchError(matched.showId, null, 10);
+  const scan = spyOn(deps.scanner, "scan").mockImplementation(() => idleStatus(deps.scanner));
+  const app = buildApp(deps);
+
+  const same = await request(app, "/admin/api/config", json("PUT", { tmdbApiKey: MASK }), LOCAL);
+  expect(same.status).toBe(200);
+  expect(scan).not.toHaveBeenCalled();
+  expect(deps.repo.getShow(unmatched.showId)!.match_attempted_at).toBe(10);
+
+  const r = await request(app, "/admin/api/config", json("PUT", { tmdbApiKey: "new-key" }), LOCAL);
+  expect(r.status).toBe(200);
+  expect(scan).toHaveBeenCalledTimes(1);
+  expect(deps.repo.getShow(unmatched.showId)).toMatchObject({ match_attempted_at: null, match_error: null });
+  expect(deps.repo.getItem(movieId)).toMatchObject({ match_attempted_at: null, match_error: null });
+  expect(deps.repo.getItem(unmatched.itemIds[0]![0]!)!.match_attempted_at).toBeNull();
+  expect(deps.repo.getShow(matched.showId)!.match_attempted_at).toBe(10);
+});
+
 test("config PUT rejects an invalid port", async () => {
   const deps = makeDeps();
   const app = buildApp(deps);
@@ -197,10 +223,14 @@ test("match on a movie sets a movie override and clears its tmdb id; missing ent
 test("admin scan, log and quit", async () => {
   const deps = makeDeps();
   mkdirSync(deps.config().mediaRoot, { recursive: true });
+  const movieId = seedMovie(deps.repo, "Odd Film");
+  deps.repo.setItemMatchError(movieId, "No TMDB match", 10);
   const app = buildApp(deps);
   const s = await request(app, "/admin/api/scan", { method: "POST" }, LOCAL);
   expect(s.status).toBe(202);
   expect(s.json.status.state).toBe("scanning");
+  // the manual rescan clears the back-off before scanning
+  expect(deps.repo.getItem(movieId)!.match_attempted_at).toBeNull();
   await deps.scanner.scan();
 
   deps.log.info("hello admin");

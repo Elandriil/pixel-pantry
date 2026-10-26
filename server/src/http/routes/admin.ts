@@ -120,7 +120,10 @@ export function adminRoutes(deps: Deps): Hono<Env> {
     const old = deps.config();
     const next = mergeConfig(old, await jsonBody(c));
     deps.saveConfig(next);
-    if (next.mediaRoot !== old.mediaRoot) void scanner.scan();
+    const keyChanged = next.tmdbApiKey !== old.tmdbApiKey;
+    // a new key may match what the old (or missing) one could not
+    if (keyChanged) repo.resetUnmatchedAttempts();
+    if (keyChanged || next.mediaRoot !== old.mediaRoot) void scanner.scan();
     return c.json({ restartRequired: next.port !== old.port });
   });
 
@@ -183,7 +186,9 @@ export function adminRoutes(deps: Deps): Hono<Env> {
   });
 
   // Mid-scan, scanner.scan() queues at most one rerun instead of starting a parallel scan.
+  // A manual rescan always retries unmatched items, ignoring the 24 h back-off.
   r.post("/admin/api/scan", (c) => {
+    repo.resetUnmatchedAttempts();
     void scanner.scan();
     return c.json({ status: scanner.status() }, 202);
   });
