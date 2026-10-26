@@ -54,7 +54,7 @@ export async function probeFile(ffprobePath: string, absPath: string): Promise<P
   }
   const timer = setTimeout(() => {
     timedOut = true;
-    proc.kill();
+    proc.kill(9);
   }, TIMEOUT_MS);
   try {
     const [stdout, stderr, code] = await Promise.all([
@@ -64,7 +64,12 @@ export async function probeFile(ffprobePath: string, absPath: string): Promise<P
     ]);
     if (timedOut) throw new Error("ffprobe failed: timeout");
     if (code !== 0) throw new Error(`ffprobe failed: ${stderr.trim()}`);
-    const json = JSON.parse(stdout) as { streams?: RawStream[]; format?: { duration?: string } };
+    let json: { streams?: RawStream[]; format?: { duration?: string } };
+    try {
+      json = JSON.parse(stdout);
+    } catch (err) {
+      throw new Error(`ffprobe failed: invalid output (${(err as Error).message})`);
+    }
     const streams = json.streams ?? [];
     const v = streams.find((s) => s.codec_type === "video");
     const d = json.format?.duration !== undefined ? Number(json.format.duration) : NaN;
