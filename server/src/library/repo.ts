@@ -122,6 +122,7 @@ export class Repo {
       fileLivePaths: p("SELECT rel_path FROM files WHERE deleted_at IS NULL"),
       fileMarkDeleted: p("UPDATE files SET deleted_at = ? WHERE rel_path = ? AND deleted_at IS NULL"),
       fileUndelete: p("UPDATE files SET deleted_at = NULL WHERE id = ?"),
+      fileSetDeleted: p("UPDATE files SET deleted_at = ? WHERE id = ?"),
       fileSetItem: p("UPDATE files SET item_id = ? WHERE id = ?"),
       fileSetProbe: p("UPDATE files SET duration = ?, audio_tracks = ?, subtitle_tracks = ?, probe_error = ? WHERE id = ?"),
       filesForItem: p("SELECT * FROM files WHERE item_id = ? ORDER BY id"),
@@ -221,6 +222,10 @@ export class Repo {
 
   undeleteFile(id: number): void {
     this.q.fileUndelete!.run(id);
+  }
+
+  setFileDeleted(id: number, at: number | null): void {
+    this.q.fileSetDeleted!.run(at, id);
   }
 
   listLiveFiles(): FileRow[] {

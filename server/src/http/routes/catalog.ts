@@ -15,7 +15,7 @@ const CATEGORIES: readonly Category[] = ["tv", "anime", "movies"];
 const RECENT_LIMIT = 30;
 const CONTINUE_LIMIT = 30;
 
-const parseJson = <T>(s: string | null, fallback: T): T => {
+export const parseJson = <T>(s: string | null, fallback: T): T => {
   if (!s) return fallback;
   try {
     return (JSON.parse(s) as T) ?? fallback;
@@ -95,17 +95,24 @@ export function toShowSummary(db: Database, row: ShowRow): ShowSummary {
   };
 }
 
-function parseId(raw: string): number {
+export function parseId(raw: string): number {
   const id = Number(raw);
   if (!Number.isSafeInteger(id) || id <= 0) throw new HttpError(400, "Invalid id");
   return id;
 }
 
 /** A show that exists and is not hidden, or 404. */
-function liveShow(deps: Deps, id: number): ShowRow {
+export function liveShow(deps: Deps, id: number): ShowRow {
   const show = deps.repo.getShow(id);
   if (!show || show.deleted_at !== null) throw new HttpError(404, "Show not found");
   return show;
+}
+
+/** An item that exists and is not hidden, or 404. */
+export function liveItem(deps: Deps, id: number): ItemRow {
+  const item = deps.repo.getItem(id);
+  if (!item || item.deleted_at !== null) throw new HttpError(404, "Item not found");
+  return item;
 }
 
 function continueRow(deps: Deps, category: Category | null): Row {
@@ -175,6 +182,17 @@ function showDetail(deps: Deps, show: ShowRow): ShowDetail {
   return { show: toShowSummary(deps.db, show), seasons, resume };
 }
 
+/** Subtitle tracks embedded in a probed file, in stream order. */
+export function embeddedTracks(file: FileRow): SubtitleTrack[] {
+  return parseJson<Track[]>(file.subtitle_tracks, []).map((t) => ({
+    id: `embedded:${t.index}`,
+    label: t.title ?? t.language ?? `Track ${t.index}`,
+    lang: t.language,
+    url: null,
+    format: "embedded",
+  }));
+}
+
 function itemDetail(deps: Deps, item: ItemRow): ItemDetail {
   const show = item.show_id !== null ? liveShow(deps, item.show_id) : null;
   const file = liveFiles(deps.repo.filesForItem(item.id))[0];
@@ -189,13 +207,7 @@ function itemDetail(deps: Deps, item: ItemRow): ItemDetail {
     if (i >= 0 && i < eps.length - 1) next = toItemSummary(deps, eps[i + 1]!, show);
   }
 
-  const subtitles: SubtitleTrack[] = parseJson<Track[]>(file.subtitle_tracks, []).map((t) => ({
-    id: `embedded:${t.index}`,
-    label: t.title ?? t.language ?? `Track ${t.index}`,
-    lang: t.language,
-    url: null,
-    format: "embedded",
-  }));
+  const subtitles = embeddedTracks(file);
   const p = getPlayback(deps.db, item.id);
   return {
     item: toItemSummary(deps, item, show),
@@ -232,11 +244,7 @@ export function catalogRoutes(deps: Deps): Hono {
 
   r.get("/shows/:id", (c) => c.json(showDetail(deps, liveShow(deps, parseId(c.req.param("id"))))));
 
-  r.get("/items/:id", (c) => {
-    const item = deps.repo.getItem(parseId(c.req.param("id")));
-    if (!item || item.deleted_at !== null) throw new HttpError(404, "Item not found");
-    return c.json(itemDetail(deps, item));
-  });
+  r.get("/items/:id", (c) => c.json(itemDetail(deps, liveItem(deps, parseId(c.req.param("id"))))));
 
   r.get("/search", (c) => {
     const q = (c.req.query("q") ?? "").trim();

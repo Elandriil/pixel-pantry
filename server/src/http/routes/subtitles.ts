@@ -1,0 +1,115 @@
+import { Hono } from "hono";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { ItemRow } from "../../library/repo";
+import type { OsSearch } from "../../subtitles/opensubtitles";
+import { openSubtitlesHash } from "../../subtitles/hash";
+import { listSidecars, saveSidecar, type SidecarTrack } from "../../subtitles/sidecar";
+import { shiftSubtitle } from "../../subtitles/shift";
+import type { SubtitleTrack } from "../../types";
+import { jsonBody } from "../body";
+import type { Deps } from "../deps";
+import { HttpError } from "../errors";
+import { embeddedTracks, liveFiles, liveItem, parseId } from "./catalog";
+
+const CONTENT_TYPES: Record<SidecarTrack["format"], string> = {
+  srt: "application/x-subrip",
+  vtt: "text/vtt",
+  ass: "text/x-ssa",
+};
+
+const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+function toTrack(itemId: number, t: SidecarTrack, n: number): SubtitleTrack {
+  return { id: `sidecar:${n}`, label: t.label, lang: t.lang, url: `/api/items/${itemId}/subtitles/sidecar/${n}`, format: t.format };
+}
+
+/** Sidecars next to a video; none when its folder cannot be read. */
+async function sidecarsOf(videoAbsPath: string): Promise<SidecarTrack[]> {
+  try {
+    return await listSidecars(videoAbsPath);
+  } catch {
+    return [];
+  }
+}
+
+/** OpenSubtitles calls fail with 503: not configured, or upstream trouble. */
+async function upstream<T>(deps: Deps, what: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    deps.log.warn(`opensubtitles ${what} failed`, { error: message(err) });
+    throw new HttpError(503, message(err));
+  }
+}
+
+export function subtitleRoutes(deps: Deps): Hono {
+  const r = new Hono();
+
+  /** The live item and the absolute path of its newest live file, or 404. */
+  const video = (raw: string) => {
+    const item = liveItem(deps, parseId(raw));
+    const file = liveFiles(deps.repo.filesForItem(item.id))[0];
+    if (!file) throw new HttpError(404, "Item has no file");
+    return { item, file, abs: join(deps.config().mediaRoot, file.rel_path) };
+  };
+
+  const searchQuery = (item: ItemRow): Omit<OsSearch, "hash"> => {
+    if (item.type === "movie") return { type: "movie", query: item.title, tmdbId: item.tmdb_id };
+    const show = item.show_id !== null ? deps.repo.getShow(item.show_id) : null;
+    return {
+      type: "episode",
+      query: show?.title ?? item.parsed_title,
+      season: item.season_number,
+      episode: item.episode_number,
+      tmdbId: show?.tmdb_id ?? null,
+    };
+  };
+
+  r.get("/items/:id/subtitles", async (c) => {
+    const { item, file, abs } = video(c.req.param("id"));
+    const sidecars = (await sidecarsOf(abs)).map((t, n) => toTrack(item.id, t, n));
+    return c.json({ tracks: [...embeddedTracks(file), ...sidecars] });
+  });
+
+  r.get("/items/:id/subtitles/sidecar/:n", async (c) => {
+    const { abs } = video(c.req.param("id"));
+    const n = Number(c.req.param("n"));
+    const track = Number.isInteger(n) ? (await sidecarsOf(abs))[n] : undefined;
+    if (!track) throw new HttpError(404, "Subtitle not found");
+    const shift = Number(c.req.query("shift") ?? 0);
+    if (!Number.isSafeInteger(shift)) throw new HttpError(400, "shift must be an integer (ms)");
+    const text = await readFile(track.path, "utf8");
+    return c.body(shift === 0 ? text : shiftSubtitle(text, shift, track.format), 200, {
+      "Content-Type": `${CONTENT_TYPES[track.format]}; charset=utf-8`,
+    });
+  });
+
+  r.get("/items/:id/subtitles/search", async (c) => {
+    const { item, abs } = video(c.req.param("id"));
+    let hash: string | undefined;
+    try {
+      hash = await openSubtitlesHash(abs);
+    } catch (err) {
+      deps.log.warn("subtitle hash failed", { path: abs, error: message(err) });
+    }
+    const results = await upstream(deps, "search", () => deps.os.search({ ...searchQuery(item), hash }));
+    return c.json({ results });
+  });
+
+  r.post("/items/:id/subtitles/download", async (c) => {
+    const { item, abs } = video(c.req.param("id"));
+    const b = await jsonBody(c);
+    if (typeof b.fileId !== "number" || !Number.isSafeInteger(b.fileId)) throw new HttpError(400, "fileId must be a number");
+    const fileId = b.fileId;
+    const text = await upstream(deps, "download", () => deps.os.download(fileId));
+    const saved = await saveSidecar(abs, text);
+    const sidecars = await listSidecars(abs);
+    const n = sidecars.findIndex((t) => t.path === saved);
+    if (n < 0) throw new Error(`saved subtitle not listed: ${saved}`);
+    deps.log.info("subtitle downloaded", { itemId: item.id, path: saved });
+    return c.json(toTrack(item.id, sidecars[n]!, n));
+  });
+
+  return r;
+}

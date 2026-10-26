@@ -2,15 +2,18 @@ import { Hono } from "hono";
 import type { Deps } from "./deps";
 import { HttpError } from "./errors";
 import { catalogRoutes } from "./routes/catalog";
+import { playbackRoutes } from "./routes/playback";
+import { scanRoutes } from "./routes/scan";
 import { streamRoutes } from "./routes/stream";
+import { subtitleRoutes } from "./routes/subtitles";
 
 export { HttpError };
 
 /**
  * Route modules mounted under `/api`. Later tasks add theirs here:
- * Task 13 playback/subtitles, Task 14 scan/admin.
+ * Task 14 admin.
  */
-const registerRoutes: ((deps: Deps) => Hono)[] = [catalogRoutes, streamRoutes];
+const registerRoutes: ((deps: Deps) => Hono)[] = [catalogRoutes, streamRoutes, playbackRoutes, subtitleRoutes, scanRoutes];
 
 export function buildApp(deps: Deps): Hono {
   const app = new Hono();
