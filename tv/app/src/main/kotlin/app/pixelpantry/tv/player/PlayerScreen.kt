@@ -12,7 +12,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,7 +27,10 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -37,6 +42,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import app.pixelpantry.tv.R
 import app.pixelpantry.tv.player.PlayerViewModel.UiState
 import app.pixelpantry.tv.ui.components.ButtonSpec
@@ -201,8 +207,13 @@ private fun Playback(
         onDispose { view.keepScreenOn = false }
     }
 
+    // Subtitles sit above the overlay's controls while it is up (its measured height, less its transparent top).
+    var overlayHeightPx by remember { mutableIntStateOf(0) }
+    val overlayTopPx = with(LocalDensity.current) { OVERLAY_FADE_TOP.roundToPx() }
+    val subtitleInsetPx = if (state.overlayVisible) (overlayHeightPx - overlayTopPx).coerceAtLeast(0) else 0
+
     Box(Modifier.fillMaxSize()) {
-        VideoSurface(exoPlayer)
+        VideoSurface(exoPlayer, subtitleInsetPx)
         if (state.buffering && !state.paused) {
             Spinner(Modifier.align(Alignment.Center), color = Color.White)
         }
@@ -213,7 +224,7 @@ private fun Playback(
                 audioFocus = audioFocus,
                 subtitlesFocus = subtitlesFocus,
                 nextFocus = nextFocus,
-                modifier = Modifier.align(Alignment.BottomCenter),
+                modifier = Modifier.align(Alignment.BottomCenter).onSizeChanged { overlayHeightPx = it.height },
                 interactive = state.menu == null,
             )
         }
@@ -275,10 +286,16 @@ private fun Playback(
     }
 }
 
-/** ExoPlayer's view, without its own controls; subtitles render through its `SubtitleView`. */
+/** The overlay's transparent gradient above its title (its top padding, see `PlayerOverlay`). */
+private val OVERLAY_FADE_TOP = 96.dp
+
+/**
+ * ExoPlayer's view, without its own controls; subtitles render through its `SubtitleView`, raised by
+ * [subtitleInsetPx] above the bottom (0: the default position).
+ */
 @OptIn(UnstableApi::class)
 @Composable
-private fun VideoSurface(exoPlayer: ExoPlayer?) {
+private fun VideoSurface(exoPlayer: ExoPlayer?, subtitleInsetPx: Int) {
     AndroidView(
         factory = { ctx ->
             PlayerView(ctx).apply {
@@ -291,7 +308,18 @@ private fun VideoSurface(exoPlayer: ExoPlayer?) {
                 descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
             }
         },
-        update = { it.player = exoPlayer },
+        update = { view ->
+            view.player = exoPlayer
+            view.subtitleView?.let { sub ->
+                val height = view.height
+                val fraction = if (subtitleInsetPx > 0 && height > 0) {
+                    subtitleInsetPx.toFloat() / height + SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION
+                } else {
+                    SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION
+                }
+                sub.setBottomPaddingFraction(fraction.coerceAtMost(0.6f))
+            }
+        },
         onRelease = { it.player = null },
         modifier = Modifier.fillMaxSize(),
     )

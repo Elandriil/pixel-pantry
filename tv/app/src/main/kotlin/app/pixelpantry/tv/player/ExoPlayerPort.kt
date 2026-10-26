@@ -13,6 +13,7 @@ import androidx.media3.common.ParserException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -63,6 +64,9 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
     private val main = Handler(Looper.getMainLooper())
     private var failed = false
 
+    /** Tags the posted failure reports, so [prepare] can drop those of the last item and nothing else. */
+    private val failureToken = Any()
+
     private val budget = LoadErrorBudget(giveUpAfterMs = GIVE_UP_AFTER_MS)
 
     private val loadErrorPolicy = object : DefaultLoadErrorHandlingPolicy() {
@@ -76,7 +80,7 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
             val decision = budget.onError(info.loadEventInfo.bytesLoaded, SystemClock.elapsedRealtime())
             if (!fatal && decision is LoadErrorBudget.Decision.Retry) return decision.delayMs
             val message = describe(info.exception)
-            main.post { fail(message) }
+            main.postAtTime({ fail(message) }, failureToken, SystemClock.uptimeMillis())
             return C.TIME_UNSET
         }
     }
@@ -122,6 +126,8 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
             override fun onPlayerError(error: PlaybackException) = fail(describe(error))
 
             override fun onTracksChanged(tracks: Tracks) = listeners.forEach { it.onTracksChanged() }
+
+            override fun onCues(cueGroup: CueGroup) = listeners.forEach { it.onCues(cueGroup.cues.isNotEmpty()) }
         })
     }
 
@@ -135,8 +141,8 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
     override val tracksKnown: Boolean get() = !exoPlayer.currentTracks.isEmpty
 
     override fun prepare(mediaItem: MediaItem, startPositionMs: Long?) {
-        // A failure posted for the previous item must not end this one.
-        main.removeCallbacksAndMessages(null)
+        // A failure posted for the previous item must not end this one; queued sidecar reports still arrive.
+        main.removeCallbacksAndMessages(failureToken)
         budget.reset()
         failed = false
         // Another item: no track override of the last one carries over (re-preparing the same item keeps them,
