@@ -1,16 +1,21 @@
 package app.pixelpantry.tv.settings
 
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import app.pixelpantry.tv.api.ApiClient
 import app.pixelpantry.tv.api.ApiException
 import app.pixelpantry.tv.api.Settings
 import app.pixelpantry.tv.api.SettingsPatch
 import app.pixelpantry.tv.server.ServerStore
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -21,6 +26,7 @@ import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 
 class SettingsRepoTest {
@@ -84,6 +90,23 @@ class SettingsRepoTest {
         r.refresh()
         assertEquals(Settings(5, 45, true), r.settings.value)
         assertEquals(Settings(5, 45, true), store.cachedSettings.first())
+    }
+
+    @Test fun unreadableCacheFallsBackToDefaultsWithoutCrashing() = runTest {
+        val failures = mutableListOf<Throwable>()
+        val guarded = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, t -> failures += t })
+        val broken = object : DataStore<Preferences> {
+            override val data: Flow<Preferences> = flow { throw IOException("disk unreadable") }
+            override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
+                throw IOException("disk unreadable")
+        }
+        val r = SettingsRepo(repoApi(), ServerStore(broken), guarded)
+        reply("""{"skipBackSeconds":5,"skipForwardSeconds":45,"autoplayNext":true}""")
+        // refresh waits for the seed; the cache write fails, but the in-memory value is published first.
+        runCatching { r.refresh() }
+        assertEquals(Settings(5, 45, true), r.settings.value)
+        assertEquals(emptyList<Throwable>(), failures)
+        guarded.cancel()
     }
 
     private fun repoApi() = ApiClient(OkHttpClient(), ApiClient.defaultJson).also { it.baseUrl = server.url("/").toString().trimEnd('/') }

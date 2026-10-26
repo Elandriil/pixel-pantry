@@ -20,8 +20,9 @@ class SettingsRepo(
     val settings: StateFlow<Settings> = _settings.asStateFlow()
 
     // Cache is read first; refresh/update wait for it, so a fresher value is never overwritten by the cache.
+    // A storage error must not escape into the app scope: the defaults simply stay in place.
     private val seed = scope.launch {
-        store.cachedSettings.first()?.let { _settings.value = it }
+        runCatching { store.cachedSettings.first() }.getOrNull()?.let { _settings.value = it }
     }
 
     suspend fun refresh() = publish(api.settings())
