@@ -152,6 +152,9 @@ class PlayerViewModel(
     /** A next/previous switch is in flight; further presses are ignored until it ends (Review Focus 5). */
     private var isSwitching = false
 
+    /** The app went to the background during a switch: the item it loads is prepared but not played. */
+    private var holdNextStart = false
+
     /** The subtitle plan the prepared MediaItem was built from (its sidecar URIs, the chosen one). */
     var currentPlan: SubtitlePlan.Plan? = null
         private set
@@ -250,14 +253,16 @@ class PlayerViewModel(
         val progress = d.item.progress
         val startMs = if (fromStart || progress == null || progress.watched) 0L else (progress.position * 1000).toLong()
         port.seekTo(startMs)
-        port.play()
+        val hold = holdNextStart
+        holdNextStart = false
+        if (!hold) port.play()
         hideJob?.cancel()
         _state.value = UiState.Playing(
             detail = d,
             positionMs = startMs,
             durationMs = port.durationMs,
-            paused = false,
-            overlayVisible = false,
+            paused = hold,
+            overlayVisible = hold,
             buffering = port.playbackState == Player.STATE_BUFFERING,
             audioLabel = audioLabel(d, plan.audioChoice),
             subtitleLabel = subtitleLabel(d, subtitle),
@@ -424,6 +429,11 @@ class PlayerViewModel(
     /** Opens the subtitle or audio menu; playback goes on and the overlay stays up while it is open. */
     fun openMenu(menu: PlayerMenu) {
         if (_state.value !is UiState.Playing || isSwitching) return
+        // A menu open at the end of an episode must not have the next one switch in under it.
+        if (_countdownActive.value) {
+            countdown.cancel()
+            stopCountdown()
+        }
         hideJob?.cancel()
         searchJob?.cancel()
         updatePlaying { it.copy(menu = menu, online = OnlineState.Idle, overlayVisible = true) }
@@ -509,6 +519,7 @@ class PlayerViewModel(
             PlayerAction.HideOverlay -> hideOverlay()
             PlayerAction.StopAndExit -> stopAndExit()
             PlayerAction.CancelCountdown -> cancelCountdown()
+            PlayerAction.PlayNextNow -> playNextNow()
             PlayerAction.CloseMenu -> closeMenu()
         }
     }
@@ -569,6 +580,14 @@ class PlayerViewModel(
         updatePlaying { if (it.countdownSeconds == null) it else it.copy(countdownSeconds = null) }
     }
 
+    /** OK / ▶ during the countdown: the next episode now (no replay of the ended one). */
+    fun playNextNow() {
+        if (!_countdownActive.value) return
+        countdown.cancel()
+        stopCountdown()
+        next()
+    }
+
     /**
      * BACK during the countdown: no autoplay for this item. The player stays on the last frame with the overlay
      * up (Next episode focused); a stale tick cannot switch any more.
@@ -613,6 +632,8 @@ class PlayerViewModel(
                     // Stay on the item we have; it is paused with its overlay up.
                     toaster.show(listOf(strings.playbackFailed, e.message.orEmpty()).joinToString(": "))
                     startTicker()
+                    // An ended item (a failed autoplay) was paused without the overlay; bring it up (Next focused).
+                    showOverlay()
                     return@launch
                 }
                 // The old item's report must take the old item id before the reporter moves on.
@@ -624,6 +645,7 @@ class PlayerViewModel(
                 toaster.show(if (forward) strings.nextEpisode(label) else strings.previousEpisode(label))
             } finally {
                 isSwitching = false
+                holdNextStart = false
             }
         }
     }
@@ -757,6 +779,7 @@ class PlayerViewModel(
      */
     fun onHostStopped() {
         if (exiting) return
+        if (isSwitching) holdNextStart = true
         val s = _state.value as? UiState.Playing ?: return
         cancelCountdown()
         if (!s.paused) togglePause()

@@ -261,9 +261,9 @@ private fun Playback(
     }
 
     // The overlay's Pause button (the seek bar, after a skip) takes focus when it appears; the root takes it
-    // back when it hides. At the end of an item with no countdown running, Next episode takes it (Pause, i.e.
+    // back when it hides. At the end of an item (countdown running or not), Next episode takes it (Pause, i.e.
     // replay, without a next one).
-    val atEnd = state.ended && state.countdownSeconds == null
+    val atEnd = state.ended
     LaunchedEffect(state.overlayVisible, atEnd) {
         val target = when {
             !state.overlayVisible -> rootFocus

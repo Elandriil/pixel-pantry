@@ -755,6 +755,10 @@ class PlayerViewModelTest {
         assertEquals(listOf("4"), port.prepared.map { it.mediaId })
         assertTrue("stays on the ended frame with the overlay up", vm.current().overlayVisible)
         assertTrue(vm.current().ended)
+        assertFalse(vm.countdownActive.value)
+        assertNull(vm.current().countdownSeconds)
+        assertEquals(4, vm.currentItemId)
+        assertEquals(4, vm.current().detail.item.id)
     }
 
     @Test fun autoplayOffShowsTheOverlayWithoutACountdown() = playerTest {
@@ -771,6 +775,9 @@ class PlayerViewModelTest {
         runCurrent()
         assertTrue(vm.current().overlayVisible)
         assertTrue(requests.none { it == "GET /api/items/5" })
+        assertFalse(vm.countdownActive.value)
+        assertEquals(4, vm.currentItemId)
+        assertTrue(vm.current().ended)
     }
 
     @Test fun noNextEpisodeShowsTheOverlayWithoutACountdown() = playerTest {
@@ -783,6 +790,10 @@ class PlayerViewModelTest {
         advanceTimeBy(20_000)
         runCurrent()
         assertEquals(listOf("4"), port.prepared.map { it.mediaId })
+        assertFalse(vm.countdownActive.value)
+        assertNull(vm.current().countdownSeconds)
+        assertEquals(4, vm.currentItemId)
+        assertTrue(vm.current().overlayVisible)
     }
 
     /** Review Focus 2: BACK early in an autoplayed episode stops it, saves its position, and autoplays nothing. */
@@ -837,6 +848,76 @@ class PlayerViewModelTest {
         assertEquals(1, requests.count { it == "GET /api/items/5" })
         assertTrue(requests.none { it == "GET /api/items/6" })
         assertEquals(listOf(3000.0), progressPosts.map { it.position() })
+    }
+
+    @Test fun okDuringTheCountdownPlaysTheNextEpisodeNow() = playerTest {
+        val vm = vm()
+        vm.playing()
+        endItem()
+        advanceTimeBy(2_001)
+        PlayerKeys.map(
+            KeyEventLike(KeyCode.DPAD_CENTER, isDown = true), overlayVisible = false, focusOnOverlay = false,
+            countdownActive = vm.countdownActive.value,
+        )!!.let(vm::onAction)
+        assertFalse(vm.countdownActive.value)
+        val s = vm.playingItem(5)
+        assertTrue("no replay of the ended item", port.calls.none { it == "seekTo(0)" })
+        assertEquals(listOf("4", "5"), port.prepared.map { it.mediaId })
+        assertFalse(s.paused)
+        assertEquals("Next episode: 2. Half Loop", toaster.current.value)
+        advanceTimeBy(20_000)
+        runCurrent()
+        withContext(Dispatchers.Default) { delay(300) }
+        assertEquals(1, requests.count { it == "GET /api/items/5" })
+        assertTrue(requests.none { it == "GET /api/items/6" })
+        assertEquals(listOf(3000.0), progressPosts.map { it.position() })
+    }
+
+    @Test fun openingAMenuDuringTheCountdownCancelsIt() = playerTest {
+        val vm = vm()
+        vm.playing()
+        endItem()
+        vm.openMenu(PlayerViewModel.PlayerMenu.Subtitles)
+        assertFalse(vm.countdownActive.value)
+        assertNull(vm.current().countdownSeconds)
+        advanceTimeBy(20_000)
+        runCurrent()
+        assertTrue(requests.none { it == "GET /api/items/5" })
+        assertEquals(4, vm.currentItemId)
+        assertEquals(PlayerViewModel.PlayerMenu.Subtitles, vm.current().menu)
+    }
+
+    @Test fun aFailedAutoplayLoadStaysOnTheEndWithTheOverlayUp() = playerTest {
+        item5Body = { MockResponse().setResponseCode(500).setBody("""{"error":"boom"}""") }
+        val vm = vm()
+        vm.playing()
+        endItem()
+        advanceTimeBy(10_001)
+        awaitRealTime { toaster.current.value?.startsWith("Playback failed") == true }
+        runCurrent()
+        assertTrue(vm.current().overlayVisible)
+        assertTrue(vm.current().ended)
+        assertFalse(vm.countdownActive.value)
+        assertEquals(4, vm.currentItemId)
+        assertEquals(listOf("4"), port.prepared.map { it.mediaId })
+    }
+
+    @Test fun leavingTheAppDuringAnAutoplayLoadDoesNotPlayTheNextEpisodeUnseen() = playerTest {
+        item5DelayMs = 300
+        val vm = vm()
+        vm.playing()
+        endItem()
+        advanceTimeBy(10_001)
+        vm.onHostStopped()
+        val s = vm.playingItem(5)
+        assertTrue(s.paused)
+        assertTrue(s.overlayVisible)
+        assertFalse(port.whenReady)
+        assertEquals("prepared and positioned, not played", "seekTo(120000)", port.calls.last())
+        // OK on return plays it.
+        vm.togglePause()
+        assertEquals("play", port.calls.last())
+        assertFalse(vm.current().paused)
     }
 
     // Subtitles, audio, sub delay, online search (Task 10)

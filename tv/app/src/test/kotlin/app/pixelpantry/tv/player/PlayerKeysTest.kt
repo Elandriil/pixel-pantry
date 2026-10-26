@@ -115,6 +115,25 @@ class PlayerKeysTest {
         assertEquals(PlayerAction.CancelCountdown, onButton(down(BACK), countdown = true))
     }
 
+    @Test fun okAndPlayDuringTheCountdownPlayTheNextEpisodeNow() {
+        for (code in listOf(DPAD_CENTER, ENTER, MEDIA_PLAY, MEDIA_PLAY_PAUSE)) {
+            assertEquals("$code, overlay hidden", PlayerAction.PlayNextNow, hidden(down(code), countdown = true))
+            assertEquals(
+                "$code, seek bar",
+                PlayerAction.PlayNextNow,
+                PlayerKeys.map(down(code), overlayVisible = true, focusOnOverlay = false, countdownActive = true),
+            )
+        }
+        // A focused button does what it says (focus starts on Next episode during the countdown).
+        assertEquals(PlayerAction.PassThrough, onButton(down(DPAD_CENTER), countdown = true))
+        assertEquals(PlayerAction.PassThrough, onButton(down(ENTER), countdown = true))
+        assertEquals(PlayerAction.PlayNextNow, onButton(down(MEDIA_PLAY), countdown = true))
+        assertEquals(PlayerAction.PlayNextNow, onButton(down(MEDIA_PLAY_PAUSE), countdown = true))
+        // Without a countdown OK still toggles pause; a held OK never acts.
+        assertEquals(PlayerAction.TogglePause, hidden(down(DPAD_CENTER)))
+        assertNull(hidden(down(DPAD_CENTER, repeat = 1), countdown = true))
+    }
+
     @Test fun backWithOverlayVisibleHidesIt() {
         assertEquals(PlayerAction.HideOverlay, onButton(down(BACK)))
         assertEquals(PlayerAction.HideOverlay, onSeekBar(down(BACK)))

@@ -29,6 +29,9 @@ sealed class PlayerAction {
     data object StopAndExit : PlayerAction()
     data object CancelCountdown : PlayerAction()
 
+    /** OK / ▶ during the end-of-episode countdown: skip the rest of it and play the next episode now. */
+    data object PlayNextNow : PlayerAction()
+
     /** BACK while the subtitle or audio menu is open. */
     data object CloseMenu : PlayerAction()
 
@@ -67,6 +70,22 @@ object PlayerKeys {
     }
 
     private fun mapPlaying(code: KeyCode, overlayVisible: Boolean, focusOnOverlay: Boolean, countdownActive: Boolean): PlayerAction? =
+        if (countdownActive) duringCountdown(code, overlayVisible, focusOnOverlay) else notCounting(code, overlayVisible, focusOnOverlay)
+
+    /**
+     * The countdown runs: OK and the play keys play the next episode now; with a button focused (Next episode,
+     * unless the user moved) OK clicks it. BACK cancels the countdown; other keys as usual.
+     */
+    private fun duringCountdown(code: KeyCode, overlayVisible: Boolean, focusOnOverlay: Boolean): PlayerAction? =
+        when (code) {
+            KeyCode.MEDIA_PLAY, KeyCode.MEDIA_PLAY_PAUSE -> PlayerAction.PlayNextNow
+            KeyCode.DPAD_CENTER, KeyCode.ENTER ->
+                if (overlayVisible && focusOnOverlay) PlayerAction.PassThrough else PlayerAction.PlayNextNow
+            KeyCode.BACK -> PlayerAction.CancelCountdown
+            else -> notCounting(code, overlayVisible, focusOnOverlay)
+        }
+
+    private fun notCounting(code: KeyCode, overlayVisible: Boolean, focusOnOverlay: Boolean): PlayerAction? =
         when (code) {
             KeyCode.CHANNEL_UP, KeyCode.MEDIA_NEXT -> PlayerAction.Next
             KeyCode.CHANNEL_DOWN, KeyCode.MEDIA_PREVIOUS -> PlayerAction.Prev
@@ -74,7 +93,6 @@ object PlayerKeys {
             KeyCode.MEDIA_PLAY -> PlayerAction.Play
             KeyCode.MEDIA_PAUSE -> PlayerAction.Pause
             KeyCode.BACK -> when {
-                countdownActive -> PlayerAction.CancelCountdown
                 overlayVisible -> PlayerAction.HideOverlay
                 else -> PlayerAction.StopAndExit
             }
