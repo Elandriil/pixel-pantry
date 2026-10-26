@@ -1,0 +1,35 @@
+Pixel Pantry server for Windows
+===============================
+
+First run
+---------
+1. Unzip this folder anywhere (for example C:\PixelPantry).
+2. Double-click PixelPantry.exe. Keep ffprobe.exe in the same folder.
+3. If Windows SmartScreen warns about an unknown publisher, choose
+   "More info" -> "Run anyway".
+4. When Windows Firewall asks, allow access on PRIVATE networks. This is
+   needed so the TV can reach the server.
+5. A tray icon appears near the clock. A black console window also stays open
+   while the server runs; minimise it (closing it stops the server).
+6. Open http://localhost:8765/admin in a browser.
+7. Set the media folder (for example D:\Media) and save.
+8. TMDB API key: create a free account at https://www.themoviedb.org, go to
+   Settings -> API, and paste the "API Read Access Token" or the v3 API key.
+9. Optional, for subtitles: create an account at https://www.opensubtitles.com,
+   create an API consumer key, then enter the key, your username and password.
+10. Click "Rescan now". The library fills in as titles are matched.
+11. The TV app finds the server automatically on the local network.
+
+Files
+-----
+- Data (database, images, settings) lives in the "data" folder next to the exe.
+- Log file: data\logs\server.log (tray menu: "Open log folder").
+- To update, replace PixelPantry.exe only. Keep the "data" folder.
+
+If the TV cannot find the server
+--------------------------------
+- The TV and this PC must be on the same Wi-Fi / LAN (not a guest network).
+- Check the Windows Firewall rule for PixelPantry.exe allows PRIVATE networks
+  (Windows Security -> Firewall -> Allow an app through firewall).
+- Make sure the network is set to "Private" in Windows network settings.
+- Try the manual address shown on the admin page (Status section).
