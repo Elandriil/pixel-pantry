@@ -29,6 +29,9 @@ sealed class PlayerAction {
     data object StopAndExit : PlayerAction()
     data object CancelCountdown : PlayerAction()
 
+    /** BACK while the subtitle or audio menu is open. */
+    data object CloseMenu : PlayerAction()
+
     /** Leave the key to Compose focus (move between overlay buttons, click the focused one). */
     data object PassThrough : PlayerAction()
 }
@@ -40,11 +43,31 @@ sealed class PlayerAction {
 object PlayerKeys {
     /**
      * [focusOnOverlay]: a button of the visible overlay has focus (false: the seek bar has it, or the overlay is
-     * hidden). Only key-down acts; a held key repeats only skips and focus moves. Null: nothing to do.
+     * hidden). [menuOpen]: the subtitle or audio menu is up; it has focus, so every key but BACK (which closes
+     * it) goes to Compose focus. Only key-down acts; a held key repeats only skips and focus moves. Null: nothing
+     * to do.
      */
-    fun map(key: KeyEventLike, overlayVisible: Boolean, focusOnOverlay: Boolean, countdownActive: Boolean): PlayerAction? {
+    fun map(
+        key: KeyEventLike,
+        overlayVisible: Boolean,
+        focusOnOverlay: Boolean,
+        countdownActive: Boolean,
+        menuOpen: Boolean = false,
+    ): PlayerAction? {
         if (!key.isDown) return null
-        val action = when (key.code) {
+        val action = when {
+            key.code == KeyCode.OTHER -> null
+            menuOpen -> if (key.code == KeyCode.BACK) PlayerAction.CloseMenu else PlayerAction.PassThrough
+            else -> mapPlaying(key.code, overlayVisible, focusOnOverlay, countdownActive)
+        }
+        if (key.repeatCount > 0 && action !in REPEATABLE) return null
+        // A held OK passes nothing through: its first press may have just focused a button, which must not click.
+        if (key.repeatCount > 0 && (key.code == KeyCode.DPAD_CENTER || key.code == KeyCode.ENTER)) return null
+        return action
+    }
+
+    private fun mapPlaying(code: KeyCode, overlayVisible: Boolean, focusOnOverlay: Boolean, countdownActive: Boolean): PlayerAction? =
+        when (code) {
             KeyCode.CHANNEL_UP, KeyCode.MEDIA_NEXT -> PlayerAction.Next
             KeyCode.CHANNEL_DOWN, KeyCode.MEDIA_PREVIOUS -> PlayerAction.Prev
             KeyCode.MEDIA_PLAY_PAUSE -> PlayerAction.TogglePause
@@ -57,26 +80,27 @@ object PlayerKeys {
             }
             KeyCode.OTHER -> null
             else -> when {
-                !overlayVisible -> hiddenOverlay(key.code)
+                !overlayVisible -> hiddenOverlay(code)
                 focusOnOverlay -> PlayerAction.PassThrough
-                else -> onSeekBar(key.code)
+                else -> onSeekBar(code)
             }
         }
-        if (key.repeatCount > 0 && action !in REPEATABLE) return null
-        // A held OK passes nothing through: its first press may have just focused a button, which must not click.
-        if (key.repeatCount > 0 && (key.code == KeyCode.DPAD_CENTER || key.code == KeyCode.ENTER)) return null
-        return action
-    }
 
     /**
      * Whether the player keeps this event from Compose. Everything is kept except what [map] passes through and
      * keys the player does not know; a key-up follows its key-down, so the OK that a button received also
      * reaches it on release (which is when it clicks).
      */
-    fun consumes(key: KeyEventLike, overlayVisible: Boolean, focusOnOverlay: Boolean, countdownActive: Boolean): Boolean {
+    fun consumes(
+        key: KeyEventLike,
+        overlayVisible: Boolean,
+        focusOnOverlay: Boolean,
+        countdownActive: Boolean,
+        menuOpen: Boolean = false,
+    ): Boolean {
         if (key.code == KeyCode.OTHER) return false
         val asDown = if (key.isDown) key else key.copy(isDown = true, repeatCount = 0)
-        return map(asDown, overlayVisible, focusOnOverlay, countdownActive) != PlayerAction.PassThrough
+        return map(asDown, overlayVisible, focusOnOverlay, countdownActive, menuOpen) != PlayerAction.PassThrough
     }
 
     private fun hiddenOverlay(code: KeyCode): PlayerAction? = when (code) {

@@ -22,7 +22,22 @@ interface PlayerPort {
     /** One of `Player.STATE_*`. */
     val playbackState: Int
 
-    fun prepare(mediaItem: MediaItem)
+    /** The prepared item's text and audio track groups, in the player's order; empty until [tracksKnown]. */
+    val textTracks: List<PlayerTrack>
+    val audioTracks: List<PlayerTrack>
+
+    /** The prepared item's tracks are known (they are forgotten by [prepare] until it has read them again). */
+    val tracksKnown: Boolean
+
+    /**
+     * Loads [mediaItem] and starts buffering at [startPositionMs] (null: at its default position). The play /
+     * pause intent carries over, so re-preparing the item playing now (a new subtitle file) keeps it playing.
+     */
+    fun prepare(mediaItem: MediaItem, startPositionMs: Long? = null)
+
+    /** Shows the text track group [groupIndex] (an index into the player's track groups); null turns text off. */
+    fun setTextTrack(groupIndex: Int?)
+    fun setAudioTrack(groupIndex: Int)
     fun play()
     fun pause()
     fun seekTo(ms: Long)
@@ -39,6 +54,22 @@ interface PlayerListener {
     fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {}
     fun onPlaybackStateChanged(state: Int) {}
 
+    /** [PlayerPort.textTracks] / [PlayerPort.audioTracks] or their selection changed. */
+    fun onTracksChanged() {}
+
     /** Playback stopped for good; [message] is plain words for the error screen. */
     fun onPlayerError(message: String) {}
 }
+
+/**
+ * One track group as the player sees it. [id] is the format id: the container's track id for an embedded track,
+ * the subtitle configuration id (`sidecar:…`) for a sidecar. [isDefault]: the file flags it as default.
+ */
+data class PlayerTrack(
+    val groupIndex: Int,
+    val id: String?,
+    val language: String?,
+    val label: String?,
+    val isDefault: Boolean,
+    val selected: Boolean,
+)

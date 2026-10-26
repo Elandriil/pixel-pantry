@@ -100,6 +100,11 @@ data class SubtitleTrack(
     val lang: String? = null,
     val url: String? = null,
     val format: String, // "srt" | "vtt" | "ass" | "embedded"
+    /**
+     * The file flags this embedded track as the default. The server does not send it yet (its `SubtitleTrack` has
+     * no such field), so the player's own track flags stand in (see `SubtitlePlan.defaultEmbeddedId`).
+     */
+    @SerialName("default") val isDefault: Boolean = false,
 )
 
 @Serializable

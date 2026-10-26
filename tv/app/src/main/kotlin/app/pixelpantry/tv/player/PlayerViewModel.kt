@@ -3,12 +3,17 @@ package app.pixelpantry.tv.player
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import android.net.Uri
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import app.pixelpantry.tv.api.ApiClient
 import app.pixelpantry.tv.api.ApiException
 import app.pixelpantry.tv.api.ItemDetail
+import app.pixelpantry.tv.api.OsResult
+import app.pixelpantry.tv.api.SubtitleTrack
 import app.pixelpantry.tv.api.Track
+import app.pixelpantry.tv.player.SubtitlePlan.OFF
 import app.pixelpantry.tv.player.ProgressReporter.Reason
 import app.pixelpantry.tv.settings.SettingsRepo
 import app.pixelpantry.tv.ui.components.Toaster
@@ -45,7 +50,6 @@ class PlayerViewModel(
     /** Texts from string resources. */
     class Strings(
         val playbackFailed: String,
-        val comingLater: String,
         val subtitlesOff: String,
         val audioDefault: String,
         /** Toasts after a switch; the argument is [episodeLabel], e.g. `2. Half Loop`. */
@@ -53,7 +57,26 @@ class PlayerViewModel(
         val previousEpisode: (String) -> String,
         val noNextEpisode: String,
         val noPreviousEpisode: String,
+        /** Sub delay pressed with an embedded track or none. */
+        val delaySidecarOnly: String,
+        /** Saving the track choice failed; the argument is the server's message. */
+        val saveChoiceFailed: (String) -> String,
     )
+
+    /** The panel open over the playing video. */
+    enum class PlayerMenu { Subtitles, Audio }
+
+    /** The subtitle menu's OpenSubtitles search. */
+    sealed interface OnlineState {
+        data object Idle : OnlineState
+        data object Searching : OnlineState
+
+        /** [applied]: the label of the subtitle just downloaded and shown; [downloading] while one downloads. */
+        data class Results(val results: List<OsResult>, val applied: String? = null, val downloading: Boolean = false) : OnlineState
+
+        /** The server's message, e.g. `OpenSubtitles not configured`. */
+        data class Error(val message: String) : OnlineState
+    }
 
     sealed interface UiState {
         data object Loading : UiState
@@ -72,6 +95,12 @@ class PlayerViewModel(
             val audioLabel: String,
             val subtitleLabel: String,
             val subDelayMs: Int,
+            /** A subtitle id or [SubtitlePlan.OFF]. */
+            val subtitleChoice: String = OFF,
+            /** `audio:<index>`; null without audio tracks. */
+            val audioChoice: String? = null,
+            val menu: PlayerMenu? = null,
+            val online: OnlineState = OnlineState.Idle,
         ) : UiState {
             val remainingMs: Long? get() = durationMs?.let { (it - positionMs).coerceAtLeast(0) }
         }
@@ -108,6 +137,22 @@ class PlayerViewModel(
     /** A next/previous switch is in flight; further presses are ignored until it ends (Review Focus 5). */
     private var isSwitching = false
 
+    /** The subtitle plan the prepared MediaItem was built from (its sidecar URIs, the chosen one). */
+    var currentPlan: SubtitlePlan.Plan? = null
+        private set
+
+    /** The current item's subtitle tracks; refreshed after an online download. */
+    val subtitleTracks: List<SubtitleTrack> get() = detail?.subtitles.orEmpty()
+
+    /**
+     * Track choices to apply once the player knows the prepared item's tracks (they are known only after
+     * prepare); [PLAYER_DEFAULT] asks for the embedded track the file flags as default.
+     */
+    private var pendingText: String? = null
+    private var pendingAudio: String? = null
+    private var searchJob: Job? = null
+    private var persistJob: Job? = null
+
     private val listener = object : PlayerListener {
         /** Pauses the player makes itself (audio focus lost, headphones out) show and report like the user's. */
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -132,6 +177,8 @@ class PlayerViewModel(
         }
 
         override fun onPlayerError(message: String) = fail(message)
+
+        override fun onTracksChanged() = applyPendingTracks()
     }
 
     init {
@@ -167,8 +214,15 @@ class PlayerViewModel(
     private fun startPlayback(d: ItemDetail, fromStart: Boolean) {
         currentItemId = d.item.id
         detail = d
-        // Subtitle configurations (sidecars) arrive with Task 10's SubtitlePlan; embedded tracks need none.
-        port.prepare(MediaItem.Builder().setUri(api.resolve(d.streamUrl)).setMediaId(d.item.id.toString()).build())
+        searchJob?.cancel()
+        // The stored choices are restored when they still name a track; the delay starts at 0 for every item.
+        val plan = SubtitlePlan.build(d, api::resolve, d.subtitleChoice, shiftMs = 0)
+        currentPlan = plan
+        val subtitle = plan.subtitleChoice
+        // Nothing stored (or stale) and no default known from the server: the file's own default flag decides.
+        pendingText = if (subtitle == OFF && d.subtitleChoice != OFF) PLAYER_DEFAULT else subtitle
+        pendingAudio = plan.audioChoice
+        port.prepare(mediaItem(d, plan))
         val progress = d.item.progress
         val startMs = if (fromStart || progress == null || progress.watched) 0L else (progress.position * 1000).toLong()
         port.seekTo(startMs)
@@ -181,11 +235,196 @@ class PlayerViewModel(
             paused = false,
             overlayVisible = false,
             buffering = port.playbackState == Player.STATE_BUFFERING,
-            audioLabel = audioLabel(d),
-            subtitleLabel = subtitleLabel(d),
+            audioLabel = audioLabel(d, plan.audioChoice),
+            subtitleLabel = subtitleLabel(d, subtitle),
             subDelayMs = 0,
+            subtitleChoice = subtitle,
+            audioChoice = plan.audioChoice,
         )
         startTicker()
+    }
+
+    /** The item's stream with every sidecar of [plan]; the chosen one is flagged default. */
+    private fun mediaItem(d: ItemDetail, plan: SubtitlePlan.Plan): MediaItem =
+        MediaItem.Builder()
+            .setUri(api.resolve(d.streamUrl))
+            .setMediaId(d.item.id.toString())
+            .setSubtitleConfigurations(
+                plan.subtitleConfigs.map { c ->
+                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(c.uri))
+                        .setMimeType(c.mimeType)
+                        .setLabel(c.label)
+                        .setLanguage(c.language)
+                        .setId(c.id)
+                        .setSelectionFlags(if (c.selected) C.SELECTION_FLAG_DEFAULT else 0)
+                        .build()
+                },
+            )
+            .build()
+
+    /** Applies [pendingText] / [pendingAudio] once the player knows the tracks; each is applied once. */
+    private fun applyPendingTracks() {
+        val d = detail ?: return
+        if (!port.tracksKnown || _state.value !is UiState.Playing) return
+        pendingText?.let { wanted ->
+            pendingText = null
+            val id = if (wanted == PLAYER_DEFAULT) SubtitlePlan.defaultEmbeddedId(d, port.textTracks) ?: OFF else wanted
+            if (wanted == PLAYER_DEFAULT) updatePlaying { it.copy(subtitleChoice = id, subtitleLabel = subtitleLabel(d, id)) }
+            if (id == OFF) {
+                port.setTextTrack(null)
+            } else {
+                // A sidecar missing from the player's groups keeps its default flag as the selection.
+                SubtitlePlan.textGroup(id, d, port.textTracks)?.let(port::setTextTrack)
+            }
+        }
+        pendingAudio?.let { wanted ->
+            pendingAudio = null
+            SubtitlePlan.audioGroup(wanted, d, port.audioTracks)?.let(port::setAudioTrack)
+        }
+    }
+
+    /**
+     * Shows subtitle [id] (or [SubtitlePlan.OFF]) and saves the choice for the next play. An embedded track or
+     * off only changes the track selection; a sidecar re-prepares the item at the current position (same
+     * progress session, still playing if it was). Choosing another track resets the delay.
+     */
+    fun selectSubtitle(id: String) {
+        val s = _state.value as? UiState.Playing ?: return
+        val d = detail ?: return
+        if (isSwitching || exiting) return
+        if (id != OFF && d.subtitles.none { it.id == id }) return
+        val delay = if (id == s.subtitleChoice) s.subDelayMs else 0
+        updatePlaying { it.copy(subtitleChoice = id, subtitleLabel = subtitleLabel(d, id), subDelayMs = delay) }
+        if (SubtitlePlan.isSidecar(id)) {
+            reprepare(d, id, delay)
+        } else {
+            pendingText = id
+            applyPendingTracks()
+        }
+        persistChoice()
+    }
+
+    /** Plays audio track `audio:<index>` and saves the choice. */
+    fun selectAudio(id: String) {
+        val d = detail ?: return
+        if (_state.value !is UiState.Playing || isSwitching || exiting) return
+        if (d.audio.none { "audio:${it.index}" == id }) return
+        updatePlaying { it.copy(audioChoice = id, audioLabel = audioLabel(d, id)) }
+        pendingAudio = id
+        applyPendingTracks()
+        persistChoice()
+    }
+
+    /**
+     * Sub delay ±: re-times the chosen sidecar by [deltaMs] (the server shifts the file, `?shift=`); a no-op with
+     * a toast for embedded tracks or none. Resets with every item.
+     */
+    fun adjustSubDelay(deltaMs: Int) {
+        val s = _state.value as? UiState.Playing ?: return
+        val d = detail ?: return
+        if (isSwitching || exiting) return
+        if (!SubtitlePlan.isSidecar(s.subtitleChoice)) {
+            toaster.show(strings.delaySidecarOnly)
+            showOverlay()
+            return
+        }
+        val delay = s.subDelayMs + deltaMs
+        updatePlaying { it.copy(subDelayMs = delay) }
+        reprepare(d, s.subtitleChoice, delay)
+        showOverlay()
+    }
+
+    /** Rebuilds the MediaItem with sidecar [choice] at [shiftMs] and prepares it where playback is now. */
+    private fun reprepare(d: ItemDetail, choice: String, shiftMs: Int) {
+        val s = _state.value as? UiState.Playing ?: return
+        val plan = SubtitlePlan.build(d, api::resolve, choice, shiftMs)
+        currentPlan = plan
+        pendingText = plan.subtitleChoice
+        pendingAudio = s.audioChoice
+        port.prepare(mediaItem(d, plan), startPositionMs = port.currentPositionMs)
+        if (!s.paused) port.play()
+    }
+
+    /**
+     * Saves both choices for the current item; a failure only toasts (the choice still applies now). Saves run
+     * one after another, so quick picks reach the server in order and the last one is what it keeps.
+     */
+    private fun persistChoice() {
+        val s = _state.value as? UiState.Playing ?: return
+        val itemId = currentItemId
+        val previous = persistJob
+        persistJob = viewModelScope.launch {
+            previous?.join()
+            try {
+                api.setTracks(itemId, subtitle = s.subtitleChoice, audio = s.audioChoice)
+            } catch (e: ApiException) {
+                toaster.show(strings.saveChoiceFailed(e.message.orEmpty()))
+            }
+        }
+    }
+
+    /** Opens the subtitle or audio menu; playback goes on and the overlay stays up while it is open. */
+    fun openMenu(menu: PlayerMenu) {
+        if (_state.value !is UiState.Playing || isSwitching) return
+        hideJob?.cancel()
+        searchJob?.cancel()
+        updatePlaying { it.copy(menu = menu, online = OnlineState.Idle, overlayVisible = true) }
+    }
+
+    /** BACK in a menu: closes it; the overlay hides again after [OVERLAY_HIDE_MS]. */
+    fun closeMenu() {
+        searchJob?.cancel()
+        updatePlaying { it.copy(menu = null, online = OnlineState.Idle) }
+        showOverlay()
+    }
+
+    /** "Search online…": asks the server's OpenSubtitles search; its error message shows in the menu. */
+    fun searchOnline() {
+        if (_state.value !is UiState.Playing) return
+        val itemId = currentItemId
+        searchJob?.cancel()
+        updatePlaying { it.copy(online = OnlineState.Searching) }
+        searchJob = viewModelScope.launch {
+            val next = try {
+                OnlineState.Results(api.searchSubtitles(itemId).results)
+            } catch (e: ApiException) {
+                OnlineState.Error(e.message.orEmpty())
+            }
+            if (currentItemId == itemId) updatePlaying { it.copy(online = next) }
+        }
+    }
+
+    /**
+     * Downloads OpenSubtitles file [fileId] next to the video, refreshes the item's tracks and shows the new one at
+     * once; the results stay up so another pick is one click away.
+     */
+    fun download(fileId: Long) {
+        val s = _state.value as? UiState.Playing ?: return
+        val results = (s.online as? OnlineState.Results)?.results.orEmpty()
+        val itemId = currentItemId
+        searchJob?.cancel()
+        updatePlaying { it.copy(online = OnlineState.Results(results, applied = null, downloading = true)) }
+        searchJob = viewModelScope.launch {
+            val track = try {
+                api.downloadSubtitle(itemId, fileId)
+            } catch (e: ApiException) {
+                if (currentItemId == itemId) updatePlaying { it.copy(online = OnlineState.Error(e.message.orEmpty())) }
+                return@launch
+            }
+            val tracks = try {
+                api.subtitles(itemId).tracks
+            } catch (e: ApiException) {
+                null
+            }
+            val d = detail ?: return@launch
+            if (currentItemId != itemId) return@launch
+            val list = (tracks ?: d.subtitles).let { if (it.any { t -> t.id == track.id }) it else it + track }
+            val refreshed = d.copy(subtitles = list)
+            detail = refreshed
+            updatePlaying { it.copy(detail = refreshed) }
+            selectSubtitle(track.id)
+            updatePlaying { it.copy(online = OnlineState.Results(results, applied = track.label)) }
+        }
     }
 
     /** Dispatches a remote key's action (see [PlayerKeys]). */
@@ -202,6 +441,7 @@ class PlayerViewModel(
             PlayerAction.HideOverlay -> hideOverlay()
             PlayerAction.StopAndExit -> stopAndExit()
             PlayerAction.CancelCountdown -> cancelCountdown()
+            PlayerAction.CloseMenu -> closeMenu()
         }
     }
 
@@ -323,15 +563,18 @@ class PlayerViewModel(
         showOverlay()
     }
 
-    /** Shows the overlay; it hides [OVERLAY_HIDE_MS] after the last call unless playback is paused. */
+    /**
+     * Shows the overlay; it hides [OVERLAY_HIDE_MS] after the last call unless playback is paused or a menu is
+     * open.
+     */
     fun showOverlay() {
         val s = _state.value as? UiState.Playing ?: return
         if (!s.overlayVisible) _state.value = s.copy(overlayVisible = true)
         hideJob?.cancel()
-        if (!s.paused) {
+        if (!s.paused && s.menu == null) {
             hideJob = viewModelScope.launch {
                 delay(OVERLAY_HIDE_MS)
-                updatePlaying { if (it.paused) it else it.copy(overlayVisible = false) }
+                updatePlaying { if (it.paused || it.menu != null) it else it.copy(overlayVisible = false) }
             }
         }
     }
@@ -367,12 +610,6 @@ class PlayerViewModel(
         if (!s.paused) togglePause()
     }
 
-    /** Audio / Subtitles / Sub delay: wired up in later tasks. */
-    fun notYetAvailable() {
-        toaster.show(strings.comingLater)
-        showOverlay()
-    }
-
     private fun fail(message: String) {
         // After BACK the STOP report is already out and the screen is leaving: no second report, no error screen.
         if (exiting || _state.value is UiState.Error) return
@@ -396,13 +633,13 @@ class PlayerViewModel(
         _state.update { if (it is UiState.Playing) transform(it) else it }
     }
 
-    private fun audioLabel(d: ItemDetail): String {
-        val track = d.audio.firstOrNull { it.isDefault } ?: d.audio.firstOrNull() ?: return strings.audioDefault
+    private fun audioLabel(d: ItemDetail, choice: String?): String {
+        val track = d.audio.firstOrNull { "audio:${it.index}" == choice } ?: return strings.audioDefault
         return trackLabel(track)
     }
 
-    private fun subtitleLabel(d: ItemDetail): String =
-        d.subtitles.firstOrNull { it.id == d.subtitleChoice }?.label ?: strings.subtitlesOff
+    private fun subtitleLabel(d: ItemDetail, choice: String): String =
+        d.subtitles.firstOrNull { it.id == choice }?.label ?: strings.subtitlesOff
 
     /** `2. Half Loop` for an episode, the title for a movie. */
     private fun episodeLabel(d: ItemDetail): String =
@@ -435,5 +672,8 @@ class PlayerViewModel(
     companion object {
         const val TICK_MS = 500L
         const val OVERLAY_HIDE_MS = 4_000L
+
+        /** A pending text choice: the embedded track the file flags as default, else off. */
+        private const val PLAYER_DEFAULT = "player-default"
     }
 }

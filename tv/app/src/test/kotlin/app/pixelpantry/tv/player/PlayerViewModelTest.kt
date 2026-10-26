@@ -69,6 +69,14 @@ class PlayerViewModelTest {
     private var item5Body: () -> MockResponse = { json(item5Fixture()) }
     private lateinit var settings: SettingsRepo
 
+    /** Bodies of `POST /api/items/4/tracks`, `.../subtitles/download`, in arrival order. */
+    private val trackPosts = ConcurrentLinkedQueue<JsonObject>()
+    private val downloadPosts = ConcurrentLinkedQueue<JsonObject>()
+    private var searchBody: () -> MockResponse = {
+        MockResponse().setResponseCode(503).setHeader("Content-Type", "application/json")
+            .setBody("""{"error":"OpenSubtitles not configured"}""")
+    }
+
     /** Stands in for the app scope the STOP report runs on; real threads, like the app's. */
     private val exitScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var progressDelayMs = 0L
@@ -80,13 +88,14 @@ class PlayerViewModelTest {
 
     private val strings = PlayerViewModel.Strings(
         playbackFailed = "Playback failed",
-        comingLater = "Coming in a later step",
         subtitlesOff = "Off",
         audioDefault = "Default",
         nextEpisode = { "Next episode: $it" },
         previousEpisode = { "Previous episode: $it" },
         noNextEpisode = "No next episode",
         noPreviousEpisode = "No previous episode",
+        delaySidecarOnly = "Delay works for subtitle files only",
+        saveChoiceFailed = { "Could not save the track choice: $it" },
     )
 
     @Before fun setUp() {
@@ -109,6 +118,16 @@ class PlayerViewModelTest {
                         json("""{"sessionId":7,"watched":false}""")
                             .setHeadersDelay(progressDelayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
                     }
+                    "POST /api/items/4/tracks" -> {
+                        trackPosts += Json.parseToJsonElement(request.body.readUtf8()) as JsonObject
+                        json("""{"ok":true}""")
+                    }
+                    "GET /api/items/4/subtitles/search" -> searchBody()
+                    "POST /api/items/4/subtitles/download" -> {
+                        downloadPosts += Json.parseToJsonElement(request.body.readUtf8()) as JsonObject
+                        json(DOWNLOADED)
+                    }
+                    "GET /api/items/4/subtitles" -> json("""{"tracks":[$EMBEDDED_3,$SIDECAR_EN,$DOWNLOADED]}""")
                     else -> MockResponse().setResponseCode(404)
                 }
             }
@@ -666,19 +685,286 @@ class PlayerViewModelTest {
         store.clear()
         assertTrue(port.released)
     }
+
+    // Subtitles, audio, sub delay, online search (Task 10)
+
+    private fun subtitledItem(subtitleChoice: String? = null, audioChoice: String? = null) = {
+        json(itemFixture(progress = """{"position":754.5,"duration":3000,"watched":false}""", subtitles = "[$EMBEDDED_3,$SIDECAR_EN]",
+            subtitleChoice = subtitleChoice, audioChoice = audioChoice))
+    }
+
+    private fun track(group: Int, id: String?, default: Boolean = false) =
+        PlayerTrack(groupIndex = group, id = id, language = null, label = null, isDefault = default, selected = false)
+
+    /** The player learnt the item's tracks: the embedded subtitle, the sidecars in the MediaItem, two audio tracks. */
+    private fun tracksArrive(vararg sidecars: String) {
+        // Ids as ExoPlayer reports them for an item merged with sidecars: prefixed with the period index.
+        port.textTracks = listOf(track(2, "0:4")) + sidecars.mapIndexed { i, id -> track(3 + i, "${i + 1}:$id") }
+        port.audioTracks = listOf(track(1, "0:2"), track(5, "0:3"))
+        port.fire { it.onTracksChanged() }
+    }
+
+    private val sidecarEn = "sidecar:Severance%20S01E01.en.srt"
+    private val downloaded = "sidecar:Severance%20S01E01.os.srt"
+
+    @Test fun loadConfiguresEverySidecarAndSelectsNoneWithoutAChoice() = playerTest {
+        itemBody = subtitledItem()
+        val vm = vm()
+        val s = vm.playing()
+        // MediaItem URIs are null under unit tests (android.net.Uri is a stub), so the plan stands in for them.
+        val configs = vm.currentPlan!!.subtitleConfigs
+        assertEquals(listOf(sidecarEn), configs.map { it.id })
+        assertEquals("application/x-subrip", configs.single().mimeType)
+        assertEquals(server.url("/api/items/4/subtitles/sidecar/Severance%20S01E01.en.srt").toString(), configs.single().uri)
+        assertFalse(configs.single().selected)
+        assertEquals("off", s.subtitleChoice)
+        assertEquals("Off", s.subtitleLabel)
+        tracksArrive(sidecarEn)
+        assertEquals("text off once the tracks are known", listOf<Int?>(null), port.textSelections)
+    }
+
+    @Test fun aStoredSidecarChoiceIsRestoredOnLoad() = playerTest {
+        itemBody = subtitledItem(subtitleChoice = "sidecar:Severance%20S01E01.en.srt", audioChoice = "audio:2")
+        val vm = vm()
+        val s = vm.playing()
+        assertTrue(vm.currentPlan!!.subtitleConfigs.single().selected)
+        assertEquals(sidecarEn, s.subtitleChoice)
+        assertEquals("English", s.subtitleLabel)
+        assertEquals("audio:2", s.audioChoice)
+        tracksArrive(sidecarEn)
+        assertEquals(listOf<Int?>(3), port.textSelections)
+        assertEquals(listOf(5), port.audioSelections)
+        assertTrue("restoring is not a new choice", trackPosts.isEmpty())
+    }
+
+    @Test fun aStoredEmbeddedChoiceIsSelectedByStreamOrderOnceTracksAreKnown() = playerTest {
+        itemBody = subtitledItem(subtitleChoice = "embedded:3")
+        val vm = vm()
+        assertEquals("embedded:3", vm.playing().subtitleChoice)
+        assertTrue(port.textSelections.isEmpty())
+        tracksArrive(sidecarEn)
+        assertEquals(listOf<Int?>(2), port.textSelections)
+        port.fire { it.onTracksChanged() }
+        assertEquals("applied once", 1, port.textSelections.size)
+    }
+
+    @Test fun withoutAChoiceThePlayersDefaultEmbeddedTrackIsSelected() = playerTest {
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        port.textTracks = listOf(track(2, "3", default = true), track(3, sidecarEn))
+        port.fire { it.onTracksChanged() }
+        assertEquals(listOf<Int?>(2), port.textSelections)
+        assertEquals("embedded:3", vm.current().subtitleChoice)
+        assertEquals("English", vm.current().subtitleLabel)
+    }
+
+    @Test fun selectSubtitleSidecarRepreparesAtThePositionAndPersists() = playerTest {
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        tracksArrive(sidecarEn)
+        port.duration = 3_000_000
+        port.position = 812_000
+        val before = port.calls.size
+        vm.selectSubtitle(sidecarEn)
+        assertEquals(listOf("prepare", "play"), port.calls.drop(before))
+        assertEquals(812_000L, port.preparedAt.last())
+        assertTrue("no seek to the start", port.seeks.none { it == 0L })
+        assertEquals(sidecarEn, vm.currentPlan!!.subtitleConfigs.single { it.selected }.id)
+        assertEquals(server.url("/api/items/4/subtitles/sidecar/Severance%20S01E01.en.srt").toString(), vm.currentPlan!!.selectedSidecarUri)
+        assertEquals(sidecarEn, vm.current().subtitleChoice)
+        assertEquals("English", vm.current().subtitleLabel)
+        assertEquals(4, vm.currentItemId)
+
+        tracksArrive(sidecarEn) // the re-prepared item's tracks
+        assertEquals(3, port.textSelections.last())
+        awaitRealTime { trackPosts.isNotEmpty() }
+        val body = trackPosts.single()
+        assertEquals(sidecarEn, body["subtitle"]!!.jsonPrimitive.content)
+        assertEquals("audio:1", body["audio"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun selectSubtitleWhilePausedStaysPaused() = playerTest {
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        vm.togglePause()
+        val before = port.calls.size
+        vm.selectSubtitle(sidecarEn)
+        assertEquals(listOf("prepare"), port.calls.drop(before))
+        assertTrue(vm.current().paused)
+    }
+
+    @Test fun selectEmbeddedOrOffOnlyChangesTheTrackSelection() = playerTest {
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        tracksArrive(sidecarEn)
+        vm.selectSubtitle("embedded:3")
+        assertEquals(2, port.textSelections.last())
+        assertEquals("English", vm.current().subtitleLabel)
+        vm.selectSubtitle("off")
+        assertNull(port.textSelections.last())
+        assertEquals("Off", vm.current().subtitleLabel)
+        assertEquals("never re-prepared", 1, port.prepared.size)
+        awaitRealTime { trackPosts.size == 2 }
+        assertEquals(listOf("embedded:3", "off"), trackPosts.map { it["subtitle"]!!.jsonPrimitive.content })
+    }
+
+    @Test fun adjustSubDelayRebuildsTheSidecarWithTheShift() = playerTest {
+        itemBody = subtitledItem(subtitleChoice = sidecarEn)
+        val vm = vm()
+        vm.playing()
+        port.position = 900_000
+        vm.adjustSubDelay(+500)
+        assertEquals(500, vm.current().subDelayMs)
+        assertEquals(2, port.prepared.size)
+        assertEquals(900_000L, port.preparedAt.last())
+        assertTrue(vm.currentPlan!!.selectedSidecarUri!!.endsWith("?shift=500"))
+        vm.adjustSubDelay(+500)
+        assertTrue(vm.currentPlan!!.selectedSidecarUri!!.endsWith("?shift=1000"))
+        vm.adjustSubDelay(-500)
+        vm.adjustSubDelay(-500)
+        assertEquals(0, vm.current().subDelayMs)
+        assertFalse(vm.currentPlan!!.selectedSidecarUri!!.contains("shift"))
+        assertEquals(5, port.prepared.size)
+    }
+
+    @Test fun adjustSubDelayIsIgnoredForEmbeddedTracks() = playerTest {
+        itemBody = subtitledItem(subtitleChoice = "embedded:3")
+        val vm = vm()
+        vm.playing()
+        vm.adjustSubDelay(+500)
+        assertEquals(0, vm.current().subDelayMs)
+        assertEquals(1, port.prepared.size)
+        assertEquals("Delay works for subtitle files only", toaster.current.value)
+    }
+
+    @Test fun theSubDelayResetsOnTheNextItem() = playerTest {
+        itemBody = subtitledItem(subtitleChoice = sidecarEn)
+        val vm = vm()
+        vm.playing()
+        vm.adjustSubDelay(+500)
+        vm.next()
+        val s = vm.playingItem(5)
+        assertEquals(0, s.subDelayMs)
+        assertEquals("off", s.subtitleChoice)
+    }
+
+    @Test fun selectAudioSelectsTheGroupAndPersists() = playerTest {
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        tracksArrive(sidecarEn)
+        vm.selectAudio("audio:2")
+        assertEquals(5, port.audioSelections.last())
+        assertEquals("audio:2", vm.current().audioChoice)
+        awaitRealTime { trackPosts.isNotEmpty() }
+        assertEquals("audio:2", trackPosts.single()["audio"]!!.jsonPrimitive.content)
+        assertEquals("off", trackPosts.single()["subtitle"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun searchOnlineShowsTheServersMessage() = playerTest {
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        vm.searchOnline()
+        assertEquals(PlayerViewModel.OnlineState.Searching, vm.current().online)
+        awaitRealTime { vm.current().online is PlayerViewModel.OnlineState.Error }
+        assertEquals("OpenSubtitles not configured", (vm.current().online as PlayerViewModel.OnlineState.Error).message)
+    }
+
+    @Test fun searchOnlineListsTheResultsAsReturned() = playerTest {
+        searchBody = { json("""{"results":[$OS_RESULT,{"fileId":7,"release":"Other","hashMatch":false,"downloads":3,"language":"en"}]}""") }
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        vm.searchOnline()
+        awaitRealTime { vm.current().online is PlayerViewModel.OnlineState.Results }
+        val r = vm.current().online as PlayerViewModel.OnlineState.Results
+        assertEquals(listOf(42L, 7L), r.results.map { it.fileId })
+        assertNull(r.applied)
+    }
+
+    @Test fun downloadAppliesTheNewSidecarAndRefreshesTheTracks() = playerTest {
+        searchBody = { json("""{"results":[$OS_RESULT]}""") }
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        vm.openMenu(PlayerViewModel.PlayerMenu.Subtitles)
+        vm.searchOnline()
+        awaitRealTime { vm.current().online is PlayerViewModel.OnlineState.Results }
+        port.position = 700_000
+        vm.download(42)
+        awaitRealTime { (vm.current().online as? PlayerViewModel.OnlineState.Results)?.applied != null }
+        assertEquals(42L, downloadPosts.single()["fileId"]!!.jsonPrimitive.content.toLong())
+        assertTrue(requests.contains("GET /api/items/4/subtitles"))
+        val s = vm.current()
+        assertEquals(listOf("embedded:3", sidecarEn, downloaded), vm.subtitleTracks.map { it.id })
+        assertEquals(downloaded, s.subtitleChoice)
+        assertEquals("OpenSubtitles", (s.online as PlayerViewModel.OnlineState.Results).applied)
+        assertEquals("the menu stays open", PlayerViewModel.PlayerMenu.Subtitles, s.menu)
+        assertEquals(700_000L, port.preparedAt.last())
+        assertEquals(listOf(sidecarEn, downloaded), vm.currentPlan!!.subtitleConfigs.map { it.id })
+        assertEquals(downloaded, vm.currentPlan!!.subtitleConfigs.single { it.selected }.id)
+        awaitRealTime { trackPosts.isNotEmpty() }
+        assertEquals(downloaded, trackPosts.single()["subtitle"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun anOpenMenuKeepsTheOverlayUpAndClosingRestartsTheHideTimer() = playerTest {
+        val vm = vm()
+        vm.playing()
+        vm.showOverlay()
+        vm.openMenu(PlayerViewModel.PlayerMenu.Audio)
+        vm.onAction(PlayerAction.PassThrough) // moving through the rows
+        advanceTimeBy(10_000)
+        assertTrue(vm.current().overlayVisible)
+        assertEquals("still playing", false, vm.current().paused)
+        vm.onAction(PlayerAction.CloseMenu)
+        assertNull(vm.current().menu)
+        advanceTimeBy(PlayerViewModel.OVERLAY_HIDE_MS + 1)
+        assertFalse(vm.current().overlayVisible)
+    }
+
+    @Test fun openingTheSubtitleMenuStartsWithTheList() = playerTest {
+        val vm = vm()
+        vm.playing()
+        vm.openMenu(PlayerViewModel.PlayerMenu.Subtitles)
+        vm.searchOnline()
+        awaitRealTime { vm.current().online is PlayerViewModel.OnlineState.Error }
+        vm.closeMenu()
+        vm.openMenu(PlayerViewModel.PlayerMenu.Subtitles)
+        assertEquals(PlayerViewModel.OnlineState.Idle, vm.current().online)
+    }
 }
 
 private const val NEXT_5 =
     """{"id":5,"type":"episode","category":"tv","title":"Half Loop","showId":3,"showTitle":"Severance","season":1,"episode":2,"addedAt":1}"""
 
-private fun itemFixture(progress: String?, next: String? = NEXT_5): String = """
+private const val EMBEDDED_3 = """{"id":"embedded:3","label":"English","lang":"eng","url":null,"format":"embedded"}"""
+private const val SIDECAR_EN =
+    """{"id":"sidecar:Severance%20S01E01.en.srt","label":"English","lang":"en","url":"/api/items/4/subtitles/sidecar/Severance%20S01E01.en.srt","format":"srt"}"""
+private const val DOWNLOADED =
+    """{"id":"sidecar:Severance%20S01E01.os.srt","label":"OpenSubtitles","lang":"en","url":"/api/items/4/subtitles/sidecar/Severance%20S01E01.os.srt","format":"srt"}"""
+private const val OS_RESULT = """{"fileId":42,"release":"Severance.S01E01.WEB","hashMatch":true,"downloads":1234,"language":"en"}"""
+
+private fun itemFixture(
+    progress: String?,
+    next: String? = NEXT_5,
+    subtitles: String = "[]",
+    subtitleChoice: String? = null,
+    audioChoice: String? = null,
+): String = """
 {"item":{"id":4,"type":"episode","category":"tv","title":"Good News About Hell","showId":3,"showTitle":"Severance",
  "season":1,"episode":1,"progress":${progress ?: "null"},"addedAt":1},
  "streamUrl":"/api/items/4/stream","fileName":"Severance S01E01.mkv","fileSize":880485,
- "audio":[{"index":1,"codec":"aac","language":"eng","default":true,"channels":2}],
- "subtitles":[],
+ "audio":[{"index":1,"codec":"aac","language":"eng","default":true,"channels":2},{"index":2,"codec":"ac3","language":"ger","channels":6}],
+ "subtitles":$subtitles,
  "next":${next ?: "null"},
- "prev":null}
+ "prev":null,
+ "subtitleChoice":${subtitleChoice?.let { "\"$it\"" } ?: "null"},
+ "audioChoice":${audioChoice?.let { "\"$it\"" } ?: "null"}}
 """.trimIndent()
 
 private fun item5Fixture(watched: Boolean = false) = """

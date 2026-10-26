@@ -172,4 +172,35 @@ class PlayerKeysTest {
         assertFalse(consumes(down(OTHER), visible = true, onButton = true))
         assertFalse(consumes(up(OTHER), visible = false, onButton = false))
     }
+
+    // A subtitle / audio menu open: Compose focus moves through its rows, BACK closes it
+
+    private fun inMenu(key: KeyEventLike, countdown: Boolean = false) =
+        PlayerKeys.map(key, overlayVisible = true, focusOnOverlay = false, countdownActive = countdown, menuOpen = true)
+
+    @Test fun menuBackClosesTheMenu() {
+        assertEquals(PlayerAction.CloseMenu, inMenu(down(BACK)))
+        assertEquals("before the countdown", PlayerAction.CloseMenu, inMenu(down(BACK), countdown = true))
+    }
+
+    @Test fun menuPassesEveryOtherKeyToFocus() {
+        for (code in listOf(DPAD_LEFT, DPAD_RIGHT, DPAD_UP, DPAD_DOWN, DPAD_CENTER, ENTER, CHANNEL_UP, CHANNEL_DOWN, MEDIA_PLAY_PAUSE)) {
+            assertEquals(code.name, PlayerAction.PassThrough, inMenu(down(code)))
+        }
+    }
+
+    @Test fun menuKeysReachComposeButBackDoesNot() {
+        fun consumes(key: KeyEventLike) =
+            PlayerKeys.consumes(key, overlayVisible = true, focusOnOverlay = false, countdownActive = false, menuOpen = true)
+        assertFalse(consumes(down(DPAD_DOWN)))
+        assertFalse(consumes(up(DPAD_CENTER)))
+        assertFalse(consumes(down(DPAD_LEFT)))
+        assertTrue(consumes(down(BACK)))
+        assertTrue(consumes(up(BACK)))
+    }
+
+    @Test fun menuHeldDirectionsRepeatAndAHeldBackDoesNot() {
+        assertEquals(PlayerAction.PassThrough, inMenu(down(DPAD_DOWN, repeat = 3)))
+        assertNull(inMenu(down(BACK, repeat = 1)))
+    }
 }

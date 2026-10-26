@@ -11,6 +11,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.ParserException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -84,6 +86,8 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
                 listeners.forEach { it.onPlaybackStateChanged(playbackState) }
 
             override fun onPlayerError(error: PlaybackException) = fail(describe(error))
+
+            override fun onTracksChanged(tracks: Tracks) = listeners.forEach { it.onTracksChanged() }
         })
     }
 
@@ -92,15 +96,49 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
     override val isPlaying: Boolean get() = exoPlayer.isPlaying
     override val playWhenReady: Boolean get() = exoPlayer.playWhenReady
     override val playbackState: Int get() = exoPlayer.playbackState
+    override val textTracks: List<PlayerTrack> get() = tracksOf(C.TRACK_TYPE_TEXT)
+    override val audioTracks: List<PlayerTrack> get() = tracksOf(C.TRACK_TYPE_AUDIO)
+    override val tracksKnown: Boolean get() = !exoPlayer.currentTracks.isEmpty
 
-    override fun prepare(mediaItem: MediaItem) {
+    override fun prepare(mediaItem: MediaItem, startPositionMs: Long?) {
         // A failure posted for the previous item must not end this one.
         main.removeCallbacksAndMessages(null)
         budget.reset()
         failed = false
-        exoPlayer.setMediaItem(mediaItem)
+        if (startPositionMs != null) exoPlayer.setMediaItem(mediaItem, startPositionMs) else exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
     }
+
+    override fun setTextTrack(groupIndex: Int?) {
+        val group = groupIndex?.let { exoPlayer.currentTracks.groups.getOrNull(it) }
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, group == null)
+            .apply { if (group != null) addOverride(TrackSelectionOverride(group.mediaTrackGroup, 0)) }
+            .build()
+    }
+
+    override fun setAudioTrack(groupIndex: Int) {
+        val group = exoPlayer.currentTracks.groups.getOrNull(groupIndex) ?: return
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .addOverride(TrackSelectionOverride(group.mediaTrackGroup, 0))
+            .build()
+    }
+
+    private fun tracksOf(type: Int): List<PlayerTrack> =
+        exoPlayer.currentTracks.groups.mapIndexedNotNull { i, g ->
+            if (g.type != type) return@mapIndexedNotNull null
+            val f = g.getTrackFormat(0)
+            PlayerTrack(
+                groupIndex = i,
+                id = f.id,
+                language = f.language,
+                label = f.label,
+                isDefault = f.selectionFlags and C.SELECTION_FLAG_DEFAULT != 0,
+                selected = g.isSelected,
+            )
+        }
 
     override fun play() = exoPlayer.play()
     override fun pause() = exoPlayer.pause()

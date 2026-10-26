@@ -62,13 +62,14 @@ class AppContainer(private val app: Application) {
     val playerStrings: PlayerViewModel.Strings by lazy {
         PlayerViewModel.Strings(
             playbackFailed = app.getString(R.string.player_playback_failed),
-            comingLater = app.getString(R.string.player_coming_later),
             subtitlesOff = app.getString(R.string.player_subtitles_off),
             audioDefault = app.getString(R.string.player_audio_default),
             nextEpisode = { app.getString(R.string.player_next_episode, it) },
             previousEpisode = { app.getString(R.string.player_previous_episode, it) },
             noNextEpisode = app.getString(R.string.player_no_next_episode),
             noPreviousEpisode = app.getString(R.string.player_no_previous_episode),
+            delaySidecarOnly = app.getString(R.string.player_delay_sidecar_only),
+            saveChoiceFailed = { app.getString(R.string.player_save_choice_failed, it) },
         )
     }
     val playbackErrorTexts: PlaybackErrorTexts by lazy {

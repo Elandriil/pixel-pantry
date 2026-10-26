@@ -81,7 +81,6 @@
     <!-- Player -->
     <string name="player_playback_failed">Playback failed</string>
     <string name="player_back">Back</string>
-    <string name="player_coming_later">Coming in a later step</string>
     <string name="player_subtitles_off">Off</string>
     <string name="player_audio_default">Default</string>
     <string name="player_prev">⏮︎ Prev</string>
@@ -91,6 +90,21 @@
     <string name="player_audio">Audio: %1$s</string>
     <string name="player_subtitles">Subtitles: %1$s</string>
     <string name="player_sub_delay">Sub delay: %1$s</string>
+    <string name="player_delay_sidecar_only">Delay works for subtitle files only</string>
+    <string name="player_save_choice_failed">Could not save the track choice: %1$s</string>
+    <string name="player_menu_subtitles">Subtitles</string>
+    <string name="player_menu_audio">Audio</string>
+    <string name="player_menu_embedded">Embedded</string>
+    <string name="player_menu_search_online">Search online…</string>
+    <string name="player_menu_online_title">Subtitles online</string>
+    <string name="player_menu_searching">Searching…</string>
+    <string name="player_menu_downloading">Downloading…</string>
+    <string name="player_menu_no_results">No subtitles found online</string>
+    <string name="player_menu_applied">Applied: %1$s</string>
+    <string name="player_menu_hash_match">✓ hash match</string>
+    <string name="player_menu_downloads">↓%1$d</string>
+    <string name="player_menu_no_audio">No audio tracks listed</string>
+    <string name="player_menu_hint_back">BACK closes</string>
     <string name="player_remaining">-%1$s</string>
     <string name="player_next_episode">Next episode: %1$s</string>
     <string name="player_previous_episode">Previous episode: %1$s</string>

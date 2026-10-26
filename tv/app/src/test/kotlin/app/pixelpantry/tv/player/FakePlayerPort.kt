@@ -8,7 +8,14 @@ import androidx.media3.exoplayer.ExoPlayer
 class FakePlayerPort : PlayerPort {
     val calls = mutableListOf<String>()
     val prepared = mutableListOf<MediaItem>()
+
+    /** The start position of each [prepare] (null: the item's default, then a seek). */
+    val preparedAt = mutableListOf<Long?>()
     val seeks = mutableListOf<Long>()
+
+    /** Every [setTextTrack] (null = text off) and [setAudioTrack], in order. */
+    val textSelections = mutableListOf<Int?>()
+    val audioSelections = mutableListOf<Int>()
     private val listeners = mutableListOf<PlayerListener>()
     var position = 0L
     var duration: Long? = null
@@ -17,16 +24,25 @@ class FakePlayerPort : PlayerPort {
     var state = Player.STATE_IDLE
     var released = false
 
+    /** Set by tests before firing `onTracksChanged`; a new [prepare] forgets them, like ExoPlayer. */
+    override var textTracks: List<PlayerTrack> = emptyList()
+    override var audioTracks: List<PlayerTrack> = emptyList()
+
     override val exoPlayer: ExoPlayer? = null
     override val currentPositionMs: Long get() = position
     override val durationMs: Long? get() = duration
     override val isPlaying: Boolean get() = playing
     override val playWhenReady: Boolean get() = whenReady
     override val playbackState: Int get() = state
+    override val tracksKnown: Boolean get() = textTracks.isNotEmpty() || audioTracks.isNotEmpty()
 
-    override fun prepare(mediaItem: MediaItem) {
+    override fun prepare(mediaItem: MediaItem, startPositionMs: Long?) {
         calls += "prepare"
         prepared += mediaItem
+        preparedAt += startPositionMs
+        textTracks = emptyList()
+        audioTracks = emptyList()
+        if (startPositionMs != null) position = startPositionMs
     }
 
     override fun play() {
@@ -52,6 +68,14 @@ class FakePlayerPort : PlayerPort {
         calls += "seekTo($ms)"
         seeks += ms
         position = ms
+    }
+
+    override fun setTextTrack(groupIndex: Int?) {
+        textSelections += groupIndex
+    }
+
+    override fun setAudioTrack(groupIndex: Int) {
+        audioSelections += groupIndex
     }
 
     override fun addListener(listener: PlayerListener) {

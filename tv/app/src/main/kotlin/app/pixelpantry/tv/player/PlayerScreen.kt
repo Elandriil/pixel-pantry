@@ -13,6 +13,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -100,9 +101,21 @@ fun PlayerScreen(vm: PlayerViewModel, onExit: () -> Unit) {
                         OverlayAction.TogglePause -> vm.togglePause()
                         OverlayAction.Prev -> vm.prev()
                         OverlayAction.Next -> vm.next()
-                        OverlayAction.Audio, OverlayAction.Subtitles, OverlayAction.SubDelay -> vm.notYetAvailable()
+                        OverlayAction.Audio -> vm.openMenu(PlayerViewModel.PlayerMenu.Audio)
+                        OverlayAction.Subtitles -> vm.openMenu(PlayerViewModel.PlayerMenu.Subtitles)
+                        is OverlayAction.SubDelay -> vm.adjustSubDelay(action.deltaMs)
                     }
                 },
+                onSelectSubtitle = { id ->
+                    vm.selectSubtitle(id)
+                    vm.closeMenu()
+                },
+                onSelectAudio = { id ->
+                    vm.selectAudio(id)
+                    vm.closeMenu()
+                },
+                onSearchOnline = vm::searchOnline,
+                onDownload = vm::download,
             )
         }
     }
@@ -132,11 +145,12 @@ private fun onKey(key: KeyEventLike, s: UiState, countdownActive: Boolean, focus
         return true
     }
     val onButton = s.overlayVisible && focus.onButton
-    val action = PlayerKeys.map(key, s.overlayVisible, onButton, countdownActive)
+    val menuOpen = s.menu != null
+    val action = PlayerKeys.map(key, s.overlayVisible, onButton, countdownActive, menuOpen)
     // Skipping keeps focus on the seek bar, so further LEFT/RIGHT keep skipping.
     if (action == PlayerAction.SkipBack || action == PlayerAction.SkipForward) focus.seekBarOnShow = true
     action?.let(vm::onAction)
-    return PlayerKeys.consumes(key, s.overlayVisible, onButton, countdownActive)
+    return PlayerKeys.consumes(key, s.overlayVisible, onButton, countdownActive, menuOpen)
 }
 
 private fun KeyEvent.toKeyEventLike(): KeyEventLike = KeyEventLike(
@@ -169,9 +183,16 @@ private fun Playback(
     rootFocus: FocusRequester,
     focus: OverlayFocus,
     onAction: (OverlayAction) -> Unit,
+    onSelectSubtitle: (String) -> Unit,
+    onSelectAudio: (String) -> Unit,
+    onSearchOnline: () -> Unit,
+    onDownload: (Long) -> Unit,
 ) {
     val pauseFocus = remember { FocusRequester() }
     val seekBarFocus = remember { FocusRequester() }
+    val audioFocus = remember { FocusRequester() }
+    val subtitlesFocus = remember { FocusRequester() }
+    val menuFocus = remember { FocusRequester() }
 
     // Keep the TV from dimming while video plays (a paused player may let it sleep).
     val view = LocalView.current
@@ -189,8 +210,47 @@ private fun Playback(
             PlayerOverlay(
                 state, onAction, pauseFocus, seekBarFocus,
                 onButtonsFocusChanged = { focus.onButton = it },
+                audioFocus = audioFocus,
+                subtitlesFocus = subtitlesFocus,
                 modifier = Modifier.align(Alignment.BottomCenter),
+                interactive = state.menu == null,
             )
+        }
+        when (state.menu) {
+            PlayerViewModel.PlayerMenu.Subtitles -> SubtitleMenu(
+                tracks = state.detail.subtitles,
+                choice = state.subtitleChoice,
+                online = state.online,
+                onSelect = onSelectSubtitle,
+                onSearchOnline = onSearchOnline,
+                onDownload = onDownload,
+                firstFocus = menuFocus,
+            )
+            PlayerViewModel.PlayerMenu.Audio -> AudioMenu(
+                tracks = state.detail.audio,
+                choice = state.audioChoice,
+                onSelect = onSelectAudio,
+                firstFocus = menuFocus,
+            )
+            null -> Unit
+        }
+    }
+
+    // The menu's first row takes focus when it opens or its content changes (list -> search -> results); when
+    // it closes, the button that opened it takes focus back.
+    val lastMenu = remember { arrayOfNulls<PlayerViewModel.PlayerMenu>(1) }
+    val onlineKey = state.online.let { it::class to ((it as? PlayerViewModel.OnlineState.Results)?.results?.isEmpty()) }
+    LaunchedEffect(state.menu, onlineKey) {
+        val menu = state.menu
+        if (menu != null) {
+            lastMenu[0] = menu
+            withFrameNanos { } // the rows are composed
+            runCatching { menuFocus.requestFocus() }
+        } else {
+            val closed = lastMenu[0] ?: return@LaunchedEffect
+            lastMenu[0] = null
+            withFrameNanos { } // the overlay's buttons can take focus again
+            runCatching { (if (closed == PlayerViewModel.PlayerMenu.Audio) audioFocus else subtitlesFocus).requestFocus() }
         }
     }
 

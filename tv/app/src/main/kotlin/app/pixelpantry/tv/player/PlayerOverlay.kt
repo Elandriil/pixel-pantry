@@ -27,6 +27,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,14 +54,17 @@ sealed interface OverlayAction {
     data object Next : OverlayAction
     data object Audio : OverlayAction
     data object Subtitles : OverlayAction
-    data object SubDelay : OverlayAction
+    /** LEFT/RIGHT on the Sub delay button: ∓0.5 s. */
+    data class SubDelay(val deltaMs: Int) : OverlayAction
 }
 
 /**
  * The bottom control panel: title, end time, seek bar with elapsed / remaining, and the buttons row.
  * [pauseFocus] is attached to the Pause/Play button, [seekBarFocus] to the seek bar; the screen decides which
  * takes focus when the overlay appears. Remote keys on the seek bar (skips, OK) are handled by the screen's key
- * preview (`PlayerKeys`); [onButtonsFocusChanged] tells it whether a button has focus.
+ * preview (`PlayerKeys`); [onButtonsFocusChanged] tells it whether a button has focus. [audioFocus] and
+ * [subtitlesFocus] take focus back when their menu closes. While a menu is open ([interactive] false) nothing
+ * here can take focus, so it stays in the menu.
  */
 @Composable
 fun PlayerOverlay(
@@ -65,7 +73,10 @@ fun PlayerOverlay(
     pauseFocus: FocusRequester,
     seekBarFocus: FocusRequester,
     onButtonsFocusChanged: (Boolean) -> Unit,
+    audioFocus: FocusRequester,
+    subtitlesFocus: FocusRequester,
     modifier: Modifier = Modifier,
+    interactive: Boolean = true,
 ) {
     val item = state.detail.item
     val remainingSec = (state.remainingMs ?: 0) / 1000.0
@@ -97,6 +108,7 @@ fun PlayerOverlay(
                 fraction = state.durationMs?.takeIf { it > 0 }?.let { state.positionMs.toFloat() / it } ?: 0f,
                 focus = seekBarFocus,
                 down = pauseFocus,
+                interactive = interactive,
             )
             Row {
                 Text(formatClock(state.positionMs / 1000.0), style = MaterialTheme.typography.bodyMedium, color = Color.White)
@@ -110,26 +122,49 @@ fun PlayerOverlay(
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.onFocusChanged { onButtonsFocusChanged(it.hasFocus) },
+                modifier = Modifier
+                    .onFocusChanged { onButtonsFocusChanged(it.hasFocus) }
+                    .focusProperties { canFocus = interactive },
             ) {
-                OverlayButton(stringResource(R.string.player_prev), enabled = state.detail.prev != null) {
+                OverlayButton(stringResource(R.string.player_prev), enabled = state.detail.prev != null, interactive = interactive) {
                     onAction(OverlayAction.Prev)
                 }
                 OverlayButton(
                     stringResource(if (state.paused) R.string.player_play else R.string.player_pause),
                     modifier = Modifier.focusRequester(pauseFocus),
+                    interactive = interactive,
                 ) { onAction(OverlayAction.TogglePause) }
-                OverlayButton(stringResource(R.string.player_next), enabled = state.detail.next != null) {
+                OverlayButton(stringResource(R.string.player_next), enabled = state.detail.next != null, interactive = interactive) {
                     onAction(OverlayAction.Next)
                 }
                 Spacer(Modifier.weight(1f))
-                OverlayButton(stringResource(R.string.player_audio, state.audioLabel)) { onAction(OverlayAction.Audio) }
-                OverlayButton(stringResource(R.string.player_subtitles, state.subtitleLabel)) {
-                    onAction(OverlayAction.Subtitles)
-                }
-                OverlayButton(stringResource(R.string.player_sub_delay, formatSubDelay(state.subDelayMs))) {
-                    onAction(OverlayAction.SubDelay)
-                }
+                OverlayButton(
+                    stringResource(R.string.player_audio, state.audioLabel),
+                    modifier = Modifier.focusRequester(audioFocus),
+                    interactive = interactive,
+                ) { onAction(OverlayAction.Audio) }
+                OverlayButton(
+                    stringResource(R.string.player_subtitles, state.subtitleLabel),
+                    modifier = Modifier.focusRequester(subtitlesFocus),
+                    interactive = interactive,
+                ) { onAction(OverlayAction.Subtitles) }
+                // LEFT/RIGHT on this button change the delay; the player's key mapping passes them through to it.
+                OverlayButton(
+                    stringResource(R.string.player_sub_delay, formatSubDelay(state.subDelayMs)),
+                    modifier = Modifier.onPreviewKeyEvent { e ->
+                        val delta = when (e.key) {
+                            Key.DirectionLeft -> -SUB_DELAY_STEP_MS
+                            Key.DirectionRight -> SUB_DELAY_STEP_MS
+                            else -> return@onPreviewKeyEvent false
+                        }
+                        // One step per press: a held key would re-prepare the item many times a second.
+                        if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) {
+                            onAction(OverlayAction.SubDelay(delta))
+                        }
+                        true
+                    },
+                    interactive = interactive,
+                ) {}
             }
         }
     }
@@ -140,16 +175,25 @@ private fun titleLine(item: app.pixelpantry.tv.api.ItemSummary): String =
     if (item.type == "episode") listOfNotNull(item.showTitle, item.buttonTag().ifEmpty { null }, item.title).joinToString(" · ")
     else item.title
 
-/** `+0.5s`, `-1.0s`, `+0.0s`. */
-internal fun formatSubDelay(ms: Int): String = String.format(Locale.ROOT, "%+.1fs", ms / 1000.0)
+/** `+0.5s`, `-1.0s`, `0.0s`. */
+internal fun formatSubDelay(ms: Int): String =
+    if (ms == 0) "0.0s" else String.format(Locale.ROOT, "%+.1fs", ms / 1000.0)
 
-/** A disabled button cannot take focus, so D-pad moves skip over it. */
+private const val SUB_DELAY_STEP_MS = 500
+
+/** A disabled button cannot take focus, so D-pad moves skip over it; nor can any while a menu is open. */
 @Composable
-private fun OverlayButton(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+private fun OverlayButton(
+    label: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    interactive: Boolean = true,
+    onClick: () -> Unit,
+) {
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.focusProperties { canFocus = enabled },
+        modifier = modifier.focusProperties { canFocus = enabled && interactive },
         contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
     ) {
         Text(label, style = MaterialTheme.typography.labelLarge)
@@ -161,7 +205,7 @@ private fun OverlayButton(label: String, modifier: Modifier = Modifier, enabled:
  * Pause button. The knob grows while focused.
  */
 @Composable
-private fun SeekBar(fraction: Float, focus: FocusRequester, down: FocusRequester) {
+private fun SeekBar(fraction: Float, focus: FocusRequester, down: FocusRequester, interactive: Boolean) {
     var focused by remember { mutableStateOf(false) }
     val accent = MaterialTheme.colorScheme.primary
     Canvas(
@@ -169,7 +213,10 @@ private fun SeekBar(fraction: Float, focus: FocusRequester, down: FocusRequester
             .fillMaxWidth()
             .height(24.dp)
             .focusRequester(focus)
-            .focusProperties { this.down = down }
+            .focusProperties {
+                this.down = down
+                canFocus = interactive
+            }
             .onFocusChanged { focused = it.isFocused }
             .focusable(),
     ) {
