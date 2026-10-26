@@ -28,13 +28,13 @@ Layout: `src/` (server code: `http/`, `library/`, `metadata/`, `subtitles/`, `pl
 bun run package:win
 ```
 
-Cross-compiles on any OS and writes `dist/win/PixelPantry.exe`, `dist/win/ffprobe.exe` and `dist/win/README.txt` (source: `scripts/README.win.txt`). Copy the `dist/win` folder to the Windows PC. The script fails if any of the three files is missing.
+Cross-compiles on any OS and writes `dist/win/PixelPantry.exe`, `dist/win/ffprobe.exe`, `dist/win/Start Pixel Pantry.vbs` and `dist/win/README.txt` (source: `scripts/README.win.txt`). Copy the `dist/win` folder to the Windows PC. The script fails if any of the four files is missing.
 
-Note: `--windows-hide-console` is only available when building on Windows, so the cross-compiled exe keeps a console window open next to the tray icon.
+Note: `--windows-hide-console` is only available when building on Windows, so the cross-compiled exe shows a console window when started directly. `Start Pixel Pantry.vbs` launches it hidden; building on Windows itself with `--windows-hide-console` removes the console entirely.
 
 ## First run on Windows
 
-1. Double-click `PixelPantry.exe` (SmartScreen: "More info" then "Run anyway").
+1. Double-click `Start Pixel Pantry.vbs` (hides the console window; double-clicking `PixelPantry.exe` directly also works but shows a console window). A shortcut to the .vbs on the desktop or in the Startup folder (`shell:startup`) makes it start with Windows. SmartScreen: "More info" then "Run anyway").
 2. Allow it through Windows Firewall on **private** networks when prompted.
 3. Open `http://localhost:8765/admin`.
 4. Set the media folder and a TMDB key (free account at themoviedb.org, Settings, API; paste the "API Read Access Token" or v3 key).
