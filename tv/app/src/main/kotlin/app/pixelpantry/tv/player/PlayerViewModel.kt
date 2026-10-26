@@ -66,6 +66,8 @@ class PlayerViewModel(
         val sidecarFailed: String,
         /** Saving the track choice failed; the argument is the server's message. */
         val saveChoiceFailed: (String) -> String,
+        /** The chosen (or stored) audio track cannot be decoded here; the player's own choice stays. */
+        val audioUnsupported: String,
     )
 
     /** The panel open over the playing video. */
@@ -174,6 +176,12 @@ class PlayerViewModel(
      */
     private var pendingText: String? = null
     private var pendingAudio: String? = null
+
+    /**
+     * An audio override (the stored or the user's choice) is in effect for the current item. Without one the
+     * player's own selection stands and the audio label follows it.
+     */
+    private var audioOverridden = false
     private var searchJob: Job? = null
 
     /**
@@ -275,7 +283,9 @@ class PlayerViewModel(
         val subtitle = plan.subtitleChoice
         // Nothing stored (or stale) and no default known from the server: the file's own default flag decides.
         pendingText = if (subtitle == OFF && d.subtitleChoice != OFF) PLAYER_DEFAULT else subtitle
-        pendingAudio = plan.audioChoice
+        // Only a stored choice overrides the player's audio selection (I1).
+        pendingAudio = plan.storedAudioChoice
+        audioOverridden = false
         port.prepare(mediaItem(d, plan))
         val progress = d.item.progress
         val startMs = if (fromStart || progress == null || progress.watched) 0L else (progress.position * 1000).toLong()
@@ -335,8 +345,32 @@ class PlayerViewModel(
         }
         pendingAudio?.let { wanted ->
             pendingAudio = null
-            SubtitlePlan.audioGroup(wanted, d, port.audioTracks)?.let(port::setAudioTrack)
+            applyAudio(d, wanted)
         }
+        if (!audioOverridden) followPlayerAudio(d)
+    }
+
+    /**
+     * Overrides the audio selection with `audio:<index>` [wanted] when it names a track the device supports;
+     * an unsupported one only toasts (the player's choice stays).
+     */
+    private fun applyAudio(d: ItemDetail, wanted: String) {
+        val group = SubtitlePlan.audioGroup(wanted, d, port.audioTracks) ?: return
+        val track = port.audioTracks.firstOrNull { it.groupIndex == group } ?: return
+        if (!track.supported) {
+            audioOverridden = false
+            toaster.show(strings.audioUnsupported)
+            return
+        }
+        port.setAudioTrack(group)
+        audioOverridden = true
+        updatePlaying { it.copy(audioChoice = wanted, audioLabel = audioLabel(d, wanted)) }
+    }
+
+    /** Without an override, the audio choice shown (label, the menu's tick) is the track the player selected. */
+    private fun followPlayerAudio(d: ItemDetail) {
+        val selected = SubtitlePlan.selectedAudioId(d, port.audioTracks) ?: return
+        updatePlaying { if (it.audioChoice == selected) it else it.copy(audioChoice = selected, audioLabel = audioLabel(d, selected)) }
     }
 
     /**
@@ -366,7 +400,14 @@ class PlayerViewModel(
         val d = detail ?: return
         if (_state.value !is UiState.Playing || isSwitching || exiting) return
         if (d.audio.none { "audio:${it.index}" == id }) return
+        val group = SubtitlePlan.audioGroup(id, d, port.audioTracks)
+        if (port.audioTracks.firstOrNull { it.groupIndex == group }?.supported == false) {
+            toaster.show(strings.audioUnsupported)
+            return
+        }
         updatePlaying { it.copy(audioChoice = id, audioLabel = audioLabel(d, id)) }
+        // Taken as an override from now on, also before the tracks are known (applied with them).
+        audioOverridden = true
         pendingAudio = id
         applyPendingTracks()
         persistChoice()
@@ -430,7 +471,8 @@ class PlayerViewModel(
         val plan = SubtitlePlan.build(d, api::resolve, choice, shiftMs)
         currentPlan = plan
         pendingText = plan.subtitleChoice
-        pendingAudio = s.audioChoice
+        // The re-prepared item gets the override back only when there is one; else the player picks again.
+        pendingAudio = if (audioOverridden) s.audioChoice else null
         port.prepare(mediaItem(d, plan), startPositionMs = port.currentPositionMs)
         if (!s.paused) port.play()
     }

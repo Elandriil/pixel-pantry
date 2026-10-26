@@ -74,6 +74,7 @@ class AppContainer(private val app: Application) {
             delaySidecarOnly = app.getString(R.string.player_delay_sidecar_only),
             sidecarFailed = app.getString(R.string.player_sidecar_failed),
             saveChoiceFailed = { app.getString(R.string.player_save_choice_failed, it) },
+            audioUnsupported = app.getString(R.string.player_audio_unsupported),
         )
     }
     val historyStrings: HistoryViewModel.Strings by lazy {

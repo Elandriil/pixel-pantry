@@ -91,6 +91,7 @@
     <string name="player_audio">Audio: %1$s</string>
     <string name="player_subtitles">Subtitles: %1$s</string>
     <string name="player_sub_delay">Sub delay: %1$s</string>
+    <string name="player_audio_unsupported">Audio track not supported on this TV</string>
     <string name="player_sidecar_failed">Subtitle file could not be loaded</string>
     <string name="player_delay_sidecar_only">Delay works for subtitle files only</string>
     <string name="player_save_choice_failed">Could not save the track choice: %1$s</string>

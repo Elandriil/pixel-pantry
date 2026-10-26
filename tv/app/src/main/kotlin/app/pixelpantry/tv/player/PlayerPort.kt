@@ -77,4 +77,6 @@ data class PlayerTrack(
     val isDefault: Boolean,
     val selected: Boolean,
     val isForced: Boolean = false,
+    /** The device can decode it (`Tracks.Group.isTrackSupported`); an override to an unsupported track plays silence. */
+    val supported: Boolean = true,
 )

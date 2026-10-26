@@ -98,6 +98,7 @@ class PlayerViewModelTest {
         delaySidecarOnly = "Delay works for subtitle files only",
         sidecarFailed = "Subtitle file could not be loaded",
         saveChoiceFailed = { "Could not save the track choice: $it" },
+        audioUnsupported = "Audio track not supported on this TV",
     )
 
     @Before fun setUp() {
@@ -1204,6 +1205,55 @@ class PlayerViewModelTest {
         awaitRealTime { trackPosts.isNotEmpty() }
         assertEquals("audio:2", trackPosts.single()["audio"]!!.jsonPrimitive.content)
         assertEquals("off", trackPosts.single()["subtitle"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun withoutAStoredAudioChoiceThePlayersSelectionStands() = playerTest {
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        port.textTracks = listOf(track(2, "0:4"))
+        port.audioTracks = listOf(track(1, "0:2"), track(5, "0:3").copy(selected = true))
+        port.fire { it.onTracksChanged() }
+        assertTrue("no audio override", port.audioSelections.isEmpty())
+        // The label and the menu's tick follow the track the player chose.
+        assertEquals("audio:2", vm.current().audioChoice)
+        assertEquals("GER · ac3", vm.current().audioLabel)
+    }
+
+    @Test fun aStoredChoiceOfAnUnsupportedAudioTrackIsNotForced() = playerTest {
+        itemBody = subtitledItem(audioChoice = "audio:2")
+        val vm = vm()
+        vm.playing()
+        port.textTracks = listOf(track(2, "0:4"))
+        port.audioTracks = listOf(track(1, "0:2").copy(selected = true), track(5, "0:3").copy(supported = false))
+        port.fire { it.onTracksChanged() }
+        assertTrue("no audio override", port.audioSelections.isEmpty())
+        assertEquals("Audio track not supported on this TV", toaster.current.value)
+        assertEquals("audio:1", vm.current().audioChoice)
+    }
+
+    @Test fun choosingAnUnsupportedAudioTrackOnlyToasts() = playerTest {
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        port.textTracks = listOf(track(2, "0:4"))
+        port.audioTracks = listOf(track(1, "0:2").copy(selected = true), track(5, "0:3").copy(supported = false))
+        port.fire { it.onTracksChanged() }
+        vm.selectAudio("audio:2")
+        assertTrue(port.audioSelections.isEmpty())
+        assertEquals("Audio track not supported on this TV", toaster.current.value)
+        assertEquals("audio:1", vm.current().audioChoice)
+        assertTrue("nothing saved", trackPosts.isEmpty())
+    }
+
+    @Test fun aSubtitleReprepareDoesNotForceAudioWithoutAChoice() = playerTest {
+        itemBody = subtitledItem()
+        val vm = vm()
+        vm.playing()
+        tracksArrive(sidecarEn)
+        vm.selectSubtitle(sidecarEn)
+        tracksArrive(sidecarEn)
+        assertTrue(port.audioSelections.isEmpty())
     }
 
     @Test fun searchOnlineShowsTheServersMessage() = playerTest {

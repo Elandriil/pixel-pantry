@@ -175,6 +175,18 @@ class SubtitlePlanTest {
     private fun forced(group: Int, id: String) =
         PlayerTrack(groupIndex = group, id = id, language = null, label = null, isDefault = false, selected = false, isForced = true)
 
+    @Test fun onlyAStoredAudioChoiceThatNamesATrackIsAnOverride() {
+        assertEquals("audio:2", SubtitlePlan.build(detail(audioChoice = "audio:2"), base, null, 0).storedAudioChoice)
+        assertNull(SubtitlePlan.build(detail(audioChoice = "audio:9"), base, null, 0).storedAudioChoice)
+        assertNull(SubtitlePlan.build(detail(), base, null, 0).storedAudioChoice)
+    }
+
+    @Test fun selectedAudioIdIsThePlayersSelectedGroupInStreamOrder() {
+        val audio = listOf(text(0, "1"), text(4, "2").copy(selected = true))
+        assertEquals("audio:2", SubtitlePlan.selectedAudioId(detail(), audio))
+        assertNull(SubtitlePlan.selectedAudioId(detail(), listOf(text(0, "1"))))
+    }
+
     @Test fun audioIdsMapToTheAudioGroupsInStreamOrder() {
         val audio = listOf(text(0, "1"), text(4, "2"))
         assertEquals(0, SubtitlePlan.audioGroup("audio:1", detail(), audio))

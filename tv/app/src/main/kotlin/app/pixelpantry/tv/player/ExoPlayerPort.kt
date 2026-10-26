@@ -139,6 +139,14 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
         main.removeCallbacksAndMessages(null)
         budget.reset()
         failed = false
+        // Another item: no track override of the last one carries over (re-preparing the same item keeps them,
+        // the view model re-applies its choices anyway). Without an override ExoPlayer picks its default tracks.
+        if (mediaItem.mediaId != exoPlayer.currentMediaItem?.mediaId) {
+            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                .build()
+        }
         if (startPositionMs != null) exoPlayer.setMediaItem(mediaItem, startPositionMs) else exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
     }
@@ -172,6 +180,7 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
                 isDefault = f.selectionFlags and C.SELECTION_FLAG_DEFAULT != 0,
                 selected = g.isSelected,
                 isForced = f.selectionFlags and C.SELECTION_FLAG_FORCED != 0,
+                supported = g.isTrackSupported(0),
             )
         }
 

@@ -34,8 +34,16 @@ object SubtitlePlan {
         val selectedEmbeddedIndex: Int?,
         /** The chosen sidecar's URI, with `?shift=` when delayed. */
         val selectedSidecarUri: String?,
-        /** `audio:<index>`, null for an item without audio tracks. */
+        /**
+         * `audio:<index>` for the label until the player reports its own selection: the stored choice, else the
+         * file's default track, else the first; null for an item without audio tracks.
+         */
         val audioChoice: String?,
+        /**
+         * The stored audio choice when it names a track of the item, else null. Only this one is applied as a
+         * track override; without it ExoPlayer's own selection stands.
+         */
+        val storedAudioChoice: String? = null,
     ) {
         /** The chosen subtitle id, or [OFF]. */
         val subtitleChoice: String
@@ -71,13 +79,22 @@ object SubtitlePlan {
             selectedEmbeddedIndex = chosen?.takeIf { it.isEmbedded }?.let(::streamIndex),
             selectedSidecarUri = configs.firstOrNull { it.selected }?.uri,
             audioChoice = audioChoice(detail),
+            storedAudioChoice = storedAudioChoice(detail),
         )
     }
 
     /** The stored audio choice when it names a track, else the default track, else the first. */
-    private fun audioChoice(detail: ItemDetail): String? {
-        val stored = detail.audioChoice?.takeIf { c -> detail.audio.any { "$AUDIO${it.index}" == c } }
-        return stored ?: (detail.audio.firstOrNull { it.isDefault } ?: detail.audio.firstOrNull())?.let { "$AUDIO${it.index}" }
+    private fun audioChoice(detail: ItemDetail): String? =
+        storedAudioChoice(detail) ?: (detail.audio.firstOrNull { it.isDefault } ?: detail.audio.firstOrNull())?.let { "$AUDIO${it.index}" }
+
+    private fun storedAudioChoice(detail: ItemDetail): String? =
+        detail.audioChoice?.takeIf { c -> detail.audio.any { "$AUDIO${it.index}" == c } }
+
+    /** `audio:<index>` of the audio group the player selected (by order, see [audioGroup]); null when none is. */
+    fun selectedAudioId(detail: ItemDetail, tracks: List<PlayerTrack>): String? {
+        val ordinal = tracks.indexOfFirst { it.selected }
+        if (ordinal < 0) return null
+        return detail.audio.getOrNull(ordinal)?.let { "$AUDIO${it.index}" }
     }
 
     fun mimeType(format: String): String = when (format) {
