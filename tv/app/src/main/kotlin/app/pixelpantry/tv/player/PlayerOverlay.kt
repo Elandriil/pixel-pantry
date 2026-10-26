@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,8 +62,8 @@ sealed interface OverlayAction {
 
 /**
  * The bottom control panel: title, end time, seek bar with elapsed / remaining, and the buttons row.
- * [pauseFocus] is attached to the Pause/Play button, [seekBarFocus] to the seek bar; the screen decides which
- * takes focus when the overlay appears. Remote keys on the seek bar (skips, OK) are handled by the screen's key
+ * [pauseFocus] is attached to the Pause/Play button, [seekBarFocus] to the seek bar, [nextFocus] to Next episode;
+ * the screen decides which takes focus when the overlay appears. Remote keys on the seek bar (skips, OK) are handled by the screen's key
  * preview (`PlayerKeys`); [onButtonsFocusChanged] tells it whether a button has focus. [audioFocus] and
  * [subtitlesFocus] take focus back when their menu closes. While a menu is open ([interactive] false) nothing
  * here can take focus, so it stays in the menu.
@@ -75,6 +77,7 @@ fun PlayerOverlay(
     onButtonsFocusChanged: (Boolean) -> Unit,
     audioFocus: FocusRequester,
     subtitlesFocus: FocusRequester,
+    nextFocus: FocusRequester,
     modifier: Modifier = Modifier,
     interactive: Boolean = true,
 ) {
@@ -134,9 +137,12 @@ fun PlayerOverlay(
                     modifier = Modifier.focusRequester(pauseFocus),
                     interactive = interactive,
                 ) { onAction(OverlayAction.TogglePause) }
-                OverlayButton(stringResource(R.string.player_next), enabled = state.detail.next != null, interactive = interactive) {
-                    onAction(OverlayAction.Next)
-                }
+                OverlayButton(
+                    stringResource(R.string.player_next),
+                    modifier = Modifier.focusRequester(nextFocus),
+                    enabled = state.detail.next != null,
+                    interactive = interactive,
+                ) { onAction(OverlayAction.Next) }
                 Spacer(Modifier.weight(1f))
                 OverlayButton(
                     stringResource(R.string.player_audio, state.audioLabel),
@@ -171,6 +177,35 @@ fun PlayerOverlay(
                 ) { onAction(OverlayAction.SubDelay(0)) }
             }
         }
+    }
+}
+
+/**
+ * The end-of-episode countdown card: "Next episode in N s… press BACK to cancel" over the next episode's
+ * `N. Title`. Presentational: [secondsLeft] comes from the view model, which also handles BACK.
+ */
+@Composable
+fun AutoplayBanner(next: app.pixelpantry.tv.api.ItemSummary, secondsLeft: Int, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .padding(32.dp)
+            .widthIn(max = 560.dp)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            stringResource(R.string.player_autoplay_countdown, secondsLeft),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            next.episode?.let { "$it. ${next.title}" } ?: next.title,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

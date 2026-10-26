@@ -111,6 +111,7 @@
     <string name="player_previous_episode">Previous episode: %1$s</string>
     <string name="player_no_next_episode">No next episode</string>
     <string name="player_no_previous_episode">No previous episode</string>
+    <string name="player_autoplay_countdown">Next episode in %1$d s… press BACK to cancel</string>
     <string name="player_error_connection">Lost connection to the server</string>
     <string name="player_error_http">The server answered with an error (HTTP %1$d)</string>
     <string name="player_error_not_found">The file is no longer on the server</string>

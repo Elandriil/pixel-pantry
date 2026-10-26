@@ -193,6 +193,7 @@ private fun Playback(
     val audioFocus = remember { FocusRequester() }
     val subtitlesFocus = remember { FocusRequester() }
     val menuFocus = remember { FocusRequester() }
+    val nextFocus = remember { FocusRequester() }
 
     // Keep the TV from dimming while video plays (a paused player may let it sleep).
     val view = LocalView.current
@@ -212,9 +213,14 @@ private fun Playback(
                 onButtonsFocusChanged = { focus.onButton = it },
                 audioFocus = audioFocus,
                 subtitlesFocus = subtitlesFocus,
+                nextFocus = nextFocus,
                 modifier = Modifier.align(Alignment.BottomCenter),
                 interactive = state.menu == null,
             )
+        }
+        val upNext = state.detail.next
+        if (state.countdownSeconds != null && upNext != null) {
+            AutoplayBanner(upNext, state.countdownSeconds, Modifier.align(Alignment.TopEnd))
         }
         when (state.menu) {
             PlayerViewModel.PlayerMenu.Subtitles -> SubtitleMenu(
@@ -255,10 +261,13 @@ private fun Playback(
     }
 
     // The overlay's Pause button (the seek bar, after a skip) takes focus when it appears; the root takes it
-    // back when it hides.
-    LaunchedEffect(state.overlayVisible) {
+    // back when it hides. At the end of an item with no countdown running, Next episode takes it (Pause, i.e.
+    // replay, without a next one).
+    val atEnd = state.ended && state.countdownSeconds == null
+    LaunchedEffect(state.overlayVisible, atEnd) {
         val target = when {
             !state.overlayVisible -> rootFocus
+            atEnd && state.detail.next != null -> nextFocus
             focus.seekBarOnShow -> seekBarFocus
             else -> pauseFocus
         }

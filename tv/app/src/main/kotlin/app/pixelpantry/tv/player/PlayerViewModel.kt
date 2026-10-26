@@ -103,6 +103,10 @@ class PlayerViewModel(
             val audioChoice: String? = null,
             val menu: PlayerMenu? = null,
             val online: OnlineState = OnlineState.Idle,
+            /** The item played to its end (the player shows its last frame); cleared by a replay or a seek back. */
+            val ended: Boolean = false,
+            /** Seconds until the next episode autoplays; null when no countdown runs. */
+            val countdownSeconds: Int? = null,
         ) : UiState {
             val remainingMs: Long? get() = durationMs?.let { (it - positionMs).coerceAtLeast(0) }
         }
@@ -118,7 +122,7 @@ class PlayerViewModel(
     private val _exitRequested = MutableStateFlow(false)
     val exitRequested: StateFlow<Boolean> = _exitRequested.asStateFlow()
 
-    /** The end-of-episode countdown (Task 11); BACK cancels it while it runs. Always false until then. */
+    /** The end-of-episode countdown runs; BACK cancels it (see [PlayerKeys]). */
     private val _countdownActive = MutableStateFlow(false)
     val countdownActive: StateFlow<Boolean> = _countdownActive.asStateFlow()
 
@@ -131,6 +135,15 @@ class PlayerViewModel(
     private var hideJob: Job? = null
     private var reportJob: Job? = null
     private var exiting = false
+
+    private val countdown = AutoplayCountdown()
+
+    /** Ticks [countdown] once a second; cancelled with it, so a stale tick can never start the next episode. */
+    private var countdownJob: Job? = null
+
+    /** The current item played to its end and its STOP report went out ([endReport]); cleared by replay or seek. */
+    private var ended = false
+    private var endReport: Job? = null
 
     /** The item playing now; after a next/previous switch it is no longer the route's [itemId]. */
     var currentItemId = itemId
@@ -176,12 +189,7 @@ class PlayerViewModel(
 
         override fun onPlaybackStateChanged(state: Int) {
             updatePlaying { it.copy(buffering = state == Player.STATE_BUFFERING) }
-            if (state == Player.STATE_ENDED) {
-                // Record the end so the item counts as watched; what happens next is Task 11 (autoplay).
-                flush(Reason.STOP, atEnd = true)
-                updatePlaying { it.copy(paused = true) }
-                showOverlay()
-            }
+            if (state == Player.STATE_ENDED) onEnded()
         }
 
         override fun onPlayerError(message: String) = fail(message)
@@ -224,6 +232,11 @@ class PlayerViewModel(
     private fun startPlayback(d: ItemDetail, fromStart: Boolean) {
         currentItemId = d.item.id
         detail = d
+        // A new item never inherits the last one's end or countdown (Review Focus 2).
+        stopCountdown()
+        countdown.reset()
+        ended = false
+        endReport = null
         searchJob?.cancel()
         delayJob?.cancel()
         // The stored choices are restored when they still name a track; the delay starts at 0 for every item.
@@ -506,9 +519,65 @@ class PlayerViewModel(
     /** CH− / Prev: switches to the previous episode at once. */
     fun prev() = switchTo(forward = false)
 
-    /** Stops the end-of-episode countdown (Task 11). */
-    fun cancelCountdown() {
+    /**
+     * The item played to its end: one STOP report at the duration (so it counts as watched), the player paused on
+     * the last frame, then the next episode after a [AutoplayCountdown.SECONDS] countdown when autoplay is on
+     * (read from the settings now) and there is one; otherwise the overlay comes up for Next / replay.
+     */
+    private fun onEnded() {
+        val s = _state.value as? UiState.Playing ?: return
+        if (ended || exiting || isSwitching) return
+        ended = true
+        // On the app scope: the end must reach the server even when the user leaves at once.
+        port.durationMs?.takeIf { it > 0 }?.let { duration ->
+            endReport = exitScope.launch { reporter.flush(duration / 1000.0, duration / 1000.0, Reason.STOP) }
+        }
+        hideJob?.cancel()
+        // Paused in the state first, so the player's own pause below is not taken for a new one.
+        updatePlaying { it.copy(paused = true, ended = true, positionMs = port.durationMs ?: it.positionMs) }
+        port.pause()
+        val next = countdown.onEnded(hasNext = s.detail.next != null, autoplayEnabled = settingsRepo.settings.value.autoplayNext)
+        if (next is AutoplayCountdown.State.Counting) startCountdown(next.secondsLeft) else showOverlay()
+    }
+
+    private fun startCountdown(seconds: Int) {
+        _countdownActive.value = true
+        updatePlaying { it.copy(countdownSeconds = seconds) }
+        countdownJob?.cancel()
+        countdownJob = viewModelScope.launch {
+            while (true) {
+                delay(COUNTDOWN_TICK_MS)
+                when (val st = countdown.tick()) {
+                    is AutoplayCountdown.State.Counting -> updatePlaying { it.copy(countdownSeconds = st.secondsLeft) }
+                    AutoplayCountdown.State.Finished -> {
+                        countdownJob = null
+                        stopCountdown()
+                        next()
+                        return@launch
+                    }
+                    AutoplayCountdown.State.Idle -> return@launch
+                }
+            }
+        }
+    }
+
+    /** Ends a running countdown (its job too) and takes its banner down; the countdown's state is left alone. */
+    private fun stopCountdown() {
+        countdownJob?.cancel()
+        countdownJob = null
         _countdownActive.value = false
+        updatePlaying { if (it.countdownSeconds == null) it else it.copy(countdownSeconds = null) }
+    }
+
+    /**
+     * BACK during the countdown: no autoplay for this item. The player stays on the last frame with the overlay
+     * up (Next episode focused); a stale tick cannot switch any more.
+     */
+    fun cancelCountdown() {
+        if (!_countdownActive.value) return
+        countdown.cancel()
+        stopCountdown()
+        showOverlay()
     }
 
     /**
@@ -525,13 +594,16 @@ class PlayerViewModel(
             return
         }
         isSwitching = true
+        countdown.cancel()
+        stopCountdown()
         delayJob?.cancel()
         tickerJob?.cancel()
         port.pause()
         // Sent even while the duration is unknown (as 0): the server ignores the duration then but keeps the session.
+        // An item that ended already reported its end (STOP); a SWITCH at the same position would only repeat it.
         val duration = port.durationMs?.takeIf { it > 0 } ?: 0L
         val position = port.currentPositionMs
-        val saved = exitScope.launch { reporter.flush(position / 1000.0, duration / 1000.0, Reason.SWITCH) }
+        val saved = if (ended) endReport else exitScope.launch { reporter.flush(position / 1000.0, duration / 1000.0, Reason.SWITCH) }
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             try {
@@ -544,7 +616,7 @@ class PlayerViewModel(
                     return@launch
                 }
                 // The old item's report must take the old item id before the reporter moves on.
-                saved.join()
+                saved?.join()
                 if (exiting) return@launch
                 reporter.start(d.item.id)
                 startPlayback(d, fromStart = false)
@@ -579,13 +651,21 @@ class PlayerViewModel(
     }
 
     /**
-     * ▶: resumes and shows the overlay (its hide timer starts again); already playing, only shows it. Ignored
-     * while a next/previous switch is in flight (the item being left is paused and its position reported).
+     * ▶: resumes and shows the overlay (its hide timer starts again); already playing, only shows it. After the
+     * end it replays from the start (the player needs a seek before it plays again). Ignored while a
+     * next/previous switch is in flight (the item being left is paused and its position reported).
      */
     fun play() {
         val s = _state.value as? UiState.Playing ?: return
         if (isSwitching) return
-        if (s.paused) {
+        if (ended) {
+            countdown.cancel()
+            stopCountdown()
+            ended = false
+            port.seekTo(0)
+            port.play()
+            updatePlaying { it.copy(paused = false, ended = false, positionMs = 0) }
+        } else if (s.paused) {
             port.play()
             updatePlaying { it.copy(paused = false) }
         }
@@ -614,6 +694,14 @@ class PlayerViewModel(
         if (_state.value !is UiState.Playing || isSwitching) return
         val max = port.durationMs ?: Long.MAX_VALUE
         val target = ms.coerceIn(0, max)
+        if (ended) {
+            // Skipping forward at the end changes nothing; back leaves the end (paused there) and its countdown.
+            if (target >= max) return showOverlay()
+            countdown.cancel()
+            stopCountdown()
+            ended = false
+            updatePlaying { it.copy(ended = false) }
+        }
         port.seekTo(target)
         updatePlaying { it.copy(positionMs = target) }
         showOverlay()
@@ -647,6 +735,8 @@ class PlayerViewModel(
     fun stopAndExit() {
         if (exiting) return
         exiting = true
+        countdown.cancel()
+        stopCountdown()
         delayJob?.cancel()
         loadJob?.cancel()
         tickerJob?.cancel()
@@ -655,35 +745,41 @@ class PlayerViewModel(
             port.pause()
             val duration = port.durationMs?.takeIf { it > 0 }
             val position = port.currentPositionMs
-            if (duration != null) exitScope.launch { reporter.flush(position / 1000.0, duration / 1000.0, Reason.STOP) }
+            // An item that ended has reported its end already.
+            if (duration != null && !ended) exitScope.launch { reporter.flush(position / 1000.0, duration / 1000.0, Reason.STOP) }
         }
         _exitRequested.value = true
     }
 
-    /** The app went to the background: pause and save the position (playback resumes with OK). */
+    /**
+     * The app went to the background: pause and save the position (playback resumes with OK); a running countdown
+     * is cancelled, so nothing starts playing unseen.
+     */
     fun onHostStopped() {
         if (exiting) return
         val s = _state.value as? UiState.Playing ?: return
+        cancelCountdown()
         if (!s.paused) togglePause()
     }
 
     private fun fail(message: String) {
         // After BACK the STOP report is already out and the screen is leaving: no second report, no error screen.
         if (exiting || _state.value is UiState.Error) return
-        if (_state.value is UiState.Playing) flush(Reason.STOP)
+        if (_state.value is UiState.Playing && !ended) flush(Reason.STOP)
+        countdown.cancel()
+        stopCountdown()
         tickerJob?.cancel()
         hideJob?.cancel()
         _state.value = UiState.Error(strings.playbackFailed, message, detail?.fileName)
     }
 
-    private fun flush(reason: Reason, atEnd: Boolean = false) {
-        viewModelScope.launch { flushNow(reason, atEnd) }
+    private fun flush(reason: Reason) {
+        viewModelScope.launch { flushNow(reason) }
     }
 
-    private suspend fun flushNow(reason: Reason, atEnd: Boolean = false) {
+    private suspend fun flushNow(reason: Reason) {
         val duration = port.durationMs?.takeIf { it > 0 } ?: return
-        val position = if (atEnd) duration else port.currentPositionMs
-        reporter.flush(position / 1000.0, duration / 1000.0, reason)
+        reporter.flush(port.currentPositionMs / 1000.0, duration / 1000.0, reason)
     }
 
     private inline fun updatePlaying(transform: (UiState.Playing) -> UiState.Playing) {
@@ -729,6 +825,7 @@ class PlayerViewModel(
     companion object {
         const val TICK_MS = 500L
         const val OVERLAY_HIDE_MS = 4_000L
+        const val COUNTDOWN_TICK_MS = 1_000L
 
         /** Sub delay presses closer together than this re-prepare the item once. */
         const val SUB_DELAY_DEBOUNCE_MS = 400L

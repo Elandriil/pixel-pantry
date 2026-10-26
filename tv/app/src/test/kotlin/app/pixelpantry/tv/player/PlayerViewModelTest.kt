@@ -688,6 +688,157 @@ class PlayerViewModelTest {
         assertTrue(port.released)
     }
 
+    // Autoplay next (Task 11)
+
+    /** The player reached the end of item 4 (3000 s). */
+    private fun endItem() {
+        port.duration = 3_000_000
+        port.position = 3_000_000
+        port.playing = false
+        port.state = Player.STATE_ENDED
+        port.fire { it.onPlaybackStateChanged(Player.STATE_ENDED) }
+    }
+
+    private fun PlayerViewModel.back() = PlayerKeys.map(
+        KeyEventLike(KeyCode.BACK, isDown = true, repeatCount = 0),
+        overlayVisible = current().overlayVisible, focusOnOverlay = current().overlayVisible,
+        countdownActive = countdownActive.value,
+    )!!.let(::onAction)
+
+    @Test fun endedWithANextEpisodeCountsDownTenSecondsThenPlaysIt() = playerTest {
+        val vm = vm()
+        vm.playing()
+        endItem()
+        assertTrue(vm.countdownActive.value)
+        assertEquals(10, vm.current().countdownSeconds)
+        assertTrue(vm.current().paused)
+        assertTrue(vm.current().ended)
+        // (No real-time wait here: virtual time would run on through the countdown meanwhile.)
+
+        advanceTimeBy(1_001)
+        assertEquals(9, vm.current().countdownSeconds)
+        advanceTimeBy(8_000)
+        assertEquals(1, vm.current().countdownSeconds)
+        assertEquals(listOf("4"), port.prepared.map { it.mediaId })
+        assertTrue(requests.none { it == "GET /api/items/5" })
+
+        advanceTimeBy(1_000)
+        val s = vm.playingItem(5)
+        assertFalse(vm.countdownActive.value)
+        assertNull(s.countdownSeconds)
+        assertFalse(s.ended)
+        assertEquals(listOf("4", "5"), port.prepared.map { it.mediaId })
+        assertEquals("play", port.calls.last())
+        assertEquals("Next episode: 2. Half Loop", toaster.current.value)
+        awaitRealTime { progressPosts.isNotEmpty() }
+        withContext(Dispatchers.Default) { delay(300) }
+        assertEquals("only the STOP at the end for item 4, no SWITCH after it", listOf(3000.0), progressPosts.map { it.position() })
+    }
+
+    @Test fun backDuringTheCountdownCancelsItAndALaterTickDoesNotSwitch() = playerTest {
+        val vm = vm()
+        vm.playing()
+        endItem()
+        advanceTimeBy(3_001)
+        assertEquals(7, vm.current().countdownSeconds)
+        vm.back()
+        assertFalse(vm.countdownActive.value)
+        assertNull(vm.current().countdownSeconds)
+        assertTrue(vm.current().overlayVisible)
+        assertFalse(vm.exitRequested.value)
+
+        advanceTimeBy(20_000)
+        runCurrent()
+        withContext(Dispatchers.Default) { delay(200) }
+        runCurrent()
+        assertTrue(requests.none { it == "GET /api/items/5" })
+        assertEquals(listOf("4"), port.prepared.map { it.mediaId })
+        assertTrue("stays on the ended frame with the overlay up", vm.current().overlayVisible)
+        assertTrue(vm.current().ended)
+    }
+
+    @Test fun autoplayOffShowsTheOverlayWithoutACountdown() = playerTest {
+        settingsBody = { json("""{"skipBackSeconds":10,"skipForwardSeconds":10,"autoplayNext":false}""") }
+        val vm = vm()
+        vm.playing()
+        awaitRealTime { !settings.settings.value.autoplayNext }
+        endItem()
+        assertFalse(vm.countdownActive.value)
+        assertNull(vm.current().countdownSeconds)
+        assertTrue(vm.current().overlayVisible)
+        assertTrue(vm.current().ended)
+        advanceTimeBy(20_000)
+        runCurrent()
+        assertTrue(vm.current().overlayVisible)
+        assertTrue(requests.none { it == "GET /api/items/5" })
+    }
+
+    @Test fun noNextEpisodeShowsTheOverlayWithoutACountdown() = playerTest {
+        itemBody = { json(itemFixture(progress = null, next = null)) }
+        val vm = vm()
+        vm.playing()
+        endItem()
+        assertFalse(vm.countdownActive.value)
+        assertTrue(vm.current().overlayVisible)
+        advanceTimeBy(20_000)
+        runCurrent()
+        assertEquals(listOf("4"), port.prepared.map { it.mediaId })
+    }
+
+    /** Review Focus 2: BACK early in an autoplayed episode stops it, saves its position, and autoplays nothing. */
+    @Test fun backSoonAfterAnAutoplayedEpisodeStopsItWithoutASecondAutoplay() = playerTest {
+        val vm = vm()
+        vm.playing()
+        endItem()
+        advanceTimeBy(10_001)
+        vm.playingItem(5)
+        port.state = Player.STATE_READY
+        port.position = 125_000
+        assertFalse(vm.countdownActive.value)
+        vm.back()
+        assertTrue(vm.exitRequested.value)
+        awaitRealTime { progressPosts5.any { it.position() == 125.0 } }
+
+        advanceTimeBy(20_000)
+        runCurrent()
+        withContext(Dispatchers.Default) { delay(300) }
+        assertEquals(listOf("4", "5"), port.prepared.map { it.mediaId })
+        assertTrue(requests.none { it == "GET /api/items/6" })
+        assertEquals("one STOP for item 5", listOf(125.0), progressPosts5.map { it.position() })
+        assertEquals("item 4 only got its end", listOf(3000.0), progressPosts.map { it.position() })
+    }
+
+    @Test fun okAfterACancelledCountdownReplaysFromTheStart() = playerTest {
+        val vm = vm()
+        vm.playing()
+        endItem()
+        vm.back()
+        assertTrue(vm.current().paused)
+        vm.togglePause()
+        assertEquals(listOf("seekTo(0)", "play"), port.calls.takeLast(2))
+        assertFalse(vm.current().paused)
+        assertFalse(vm.current().ended)
+        assertEquals(0L, vm.current().positionMs)
+        advanceTimeBy(20_000)
+        runCurrent()
+        assertEquals(listOf("4"), port.prepared.map { it.mediaId })
+    }
+
+    @Test fun nextDuringTheCountdownSwitchesOnceWithoutASwitchReport() = playerTest {
+        val vm = vm()
+        vm.playing()
+        endItem()
+        advanceTimeBy(2_001)
+        vm.next()
+        vm.playingItem(5)
+        advanceTimeBy(20_000)
+        runCurrent()
+        withContext(Dispatchers.Default) { delay(300) }
+        assertEquals(1, requests.count { it == "GET /api/items/5" })
+        assertTrue(requests.none { it == "GET /api/items/6" })
+        assertEquals(listOf(3000.0), progressPosts.map { it.position() })
+    }
+
     // Subtitles, audio, sub delay, online search (Task 10)
 
     private fun subtitledItem(subtitleChoice: String? = null, audioChoice: String? = null) = {
