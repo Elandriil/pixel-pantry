@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
+import { libraryFilePath } from "../../config";
 import type { FileRow } from "../../library/repo";
 import { listHistory, stats } from "../../playback/history";
 import { reportProgress, setSeasonWatched, setShowWatched, setTrackChoice, setWatched } from "../../playback/progress";
@@ -22,9 +22,10 @@ function readSettings(deps: Deps): Settings {
   return { ...DEFAULT_SETTINGS, ...parseJson<Partial<Settings>>(deps.repo.getSetting(SETTINGS_KEY), {}) };
 }
 
-/** Video files and their sidecar subtitles, as absolute paths. */
-async function fileTargets(root: string, f: FileRow): Promise<string[]> {
-  const abs = join(root, f.rel_path);
+/** Video files and their sidecar subtitles, as absolute paths. Nothing once the library folder is gone from the settings. */
+async function fileTargets(deps: Deps, f: FileRow): Promise<string[]> {
+  const abs = libraryFilePath(deps.config().libraries, f.rel_path);
+  if (!abs) return [];
   try {
     return [abs, ...(await listSidecars(abs)).map((t) => t.path)];
   } catch {
@@ -33,11 +34,11 @@ async function fileTargets(root: string, f: FileRow): Promise<string[]> {
 }
 
 /**
- * What to send to the bin for `files`. With `folders`, a top-level folder below the category
+ * What to send to the bin for `files`. With `folders`, a top-level folder below the library folder
  * (`tv/Severance`) whose every live video belongs to `files` is trashed whole instead of file by file.
  */
 async function trashTargets(deps: Deps, files: FileRow[], folders: boolean): Promise<string[]> {
-  const root = deps.config().mediaRoot;
+  const libraries = deps.config().libraries;
   const ours = new Set(files.map((f) => f.id));
   const all = folders ? deps.repo.listLiveFiles() : [];
   const out = new Set<string>();
@@ -47,13 +48,14 @@ async function trashTargets(deps: Deps, files: FileRow[], folders: boolean): Pro
     if (folders && parts.length >= 3) {
       const folder = parts.slice(0, 2).join("/");
       if (wholeFolders.has(folder)) continue;
-      if (all.filter((x) => x.rel_path.startsWith(`${folder}/`)).every((x) => ours.has(x.id))) {
+      const abs = libraryFilePath(libraries, folder);
+      if (abs && all.filter((x) => x.rel_path.startsWith(`${folder}/`)).every((x) => ours.has(x.id))) {
         wholeFolders.add(folder);
-        out.add(join(root, folder));
+        out.add(abs);
         continue;
       }
     }
-    for (const p of await fileTargets(root, f)) out.add(p);
+    for (const p of await fileTargets(deps, f)) out.add(p);
   }
   return [...out];
 }

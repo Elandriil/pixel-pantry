@@ -1,9 +1,9 @@
 import { Hono } from "hono";
-import { extname, join } from "node:path";
+import { extname } from "node:path";
 import type { ImageSize } from "../../metadata/images";
 import type { Deps } from "../deps";
 import { HttpError } from "../errors";
-import { liveFiles } from "./catalog";
+import { filePath, liveFiles } from "./catalog";
 
 const VIDEO_TYPES: Record<string, string> = {
   ".mkv": "video/x-matroska",
@@ -54,7 +54,7 @@ export function streamRoutes(deps: Deps): Hono {
     const file = liveFiles(deps.repo.filesForItem(id))[0];
     if (!file) throw new HttpError(404, "Item has no file");
 
-    const bun = Bun.file(join(deps.config().mediaRoot, file.rel_path));
+    const bun = Bun.file(filePath(deps, file));
     if (!(await bun.exists())) throw new HttpError(404, "File missing on disk");
     const size = bun.size;
 

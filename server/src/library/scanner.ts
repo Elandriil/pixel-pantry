@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import type { Library } from "../config";
 import type { Logger } from "../log";
 import { absoluteToSeasonEpisode } from "../metadata/anime";
 import { pickMatch } from "../metadata/matcher";
@@ -25,7 +25,7 @@ export interface ScannerDeps {
   repo: Repo;
   tmdb: TmdbLike;
   probe: (absPath: string) => Promise<ProbeResult>;
-  mediaRoot: () => string;
+  libraries: () => Library[];
   log: Logger;
   now?: () => number;
 }
@@ -35,7 +35,6 @@ interface LiveFile {
   parsed: ParsedVideo;
 }
 
-const CATEGORIES = ["tv", "anime", "movies"] as const;
 const MATCH_RETRY_MS = 24 * 60 * 60 * 1000;
 const REFRESH_MS = 7 * MATCH_RETRY_MS;
 
@@ -125,21 +124,23 @@ export class Scanner {
     await null;
     this.walkStarted = true;
     try {
-      const root = this.deps.mediaRoot();
-      if (!root) {
-        this.st.lastError = "Media folder not set";
-      } else if (!existsSync(root)) {
-        // e.g. an unplugged drive: keep the library as it is rather than marking every file deleted
-        this.st.lastError = `Media folder not found: ${root}`;
-      } else if (!CATEGORIES.some((c) => existsSync(join(root, c)))) {
-        this.st.lastError = `No tv, anime or movies folder in ${root}`;
+      const libraries = this.deps.libraries();
+      // e.g. an unplugged drive: its files are kept as they are rather than marked deleted
+      const missing = libraries.filter((l) => !existsSync(l.path));
+      const present = libraries.filter((l) => existsSync(l.path));
+      if (libraries.length === 0) {
+        this.st.lastError = "No library folders set";
+      } else if (present.length === 0) {
+        this.st.lastError = `Library folder not found: ${missing.map((l) => l.path).join(", ")}`;
       } else {
-        log.info("scan started", { root });
-        await this.walkAndProbe(root);
+        for (const l of missing) log.warn("library folder not found, keeping its files", { path: l.path });
+        log.info("scan started", { folders: present.map((l) => l.path) });
+        await this.walkAndProbe(present, missing);
         this.st.phase = "matching";
         await this.matchAll();
         repo.hideEmpty(this.now());
         log.info("scan finished", { filesSeen: this.st.filesSeen, filesProcessed: this.st.filesProcessed });
+        if (missing.length > 0) this.st.lastError = `Library folder not found: ${missing.map((l) => l.path).join(", ")}`;
       }
     } catch (err) {
       this.st.lastError = message(err);
@@ -161,15 +162,16 @@ export class Scanner {
 
   // phase 1: walk, then probe new or changed files one at a time
 
-  private async walkAndProbe(root: string): Promise<void> {
+  /** Files of a missing library folder are kept as they are; files of a library removed from the config are not. */
+  private async walkAndProbe(present: Library[], missing: Library[]): Promise<void> {
     const { repo, log } = this.deps;
-    const entries = await listVideoFiles(root);
+    const entries = await listVideoFiles(present);
     this.st.filesSeen = entries.length;
     this.st.phase = "probing";
     for (const e of entries) {
       const existing = repo.getFileByPath(e.relPath);
       if (existing && existing.deleted_at === null && existing.size === e.size && existing.mtime === e.mtime) continue;
-      const parsed = parseVideoPath(e.relPath);
+      const parsed = parseVideoPath(e.relPath, e.category);
       const id = repo.upsertFile({
         rel_path: e.relPath,
         category: e.category,
@@ -185,7 +187,7 @@ export class Scanner {
         deleted_at: null,
       });
       try {
-        repo.setFileProbe(id, await this.deps.probe(join(root, e.relPath)), null);
+        repo.setFileProbe(id, await this.deps.probe(e.absPath), null);
       } catch (err) {
         log.warn("probe failed", { path: e.relPath, error: message(err) });
         repo.setFileProbe(id, null, message(err));
@@ -195,6 +197,7 @@ export class Scanner {
     repo.markFilesDeletedExcept(
       entries.map((e) => e.relPath),
       this.now(),
+      missing.map((l) => `${l.id}/`),
     );
   }
 

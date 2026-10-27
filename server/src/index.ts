@@ -2,7 +2,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { advertise } from "./discovery";
 import { buildApp } from "./http/app";
-import { watchRoot } from "./library/watcher";
+import { applyAutostart } from "./autostart";
+import type { Library } from "./config";
+import { watchFolders } from "./library/watcher";
 import { Logger } from "./log";
 import { dataDir } from "./paths";
 import { lanAddresses } from "./net";
@@ -17,22 +19,27 @@ const logFatal = (kind: string) => (err: unknown) =>
   log.error(kind, err instanceof Error ? { error: err.message, stack: err.stack } : { error: String(err) });
 
 let watcher: { close(): Promise<void> } | null = null;
-const startWatcher = (root: string) => {
-  if (!root) return;
-  watcher = watchRoot(root, () => void deps.scanner.scan(), {
-    onError: (err) => log.warn("watcher error", { error: err.message }),
-  });
+const startWatcher = (libraries: Library[]) => {
+  if (libraries.length === 0) return;
+  watcher = watchFolders(
+    libraries.map((l) => l.path),
+    () => void deps.scanner.scan(),
+    { onError: (err) => log.warn("watcher error", { error: err.message }) },
+  );
 };
+const sameFolders = (a: Library[], b: Library[]) =>
+  a.length === b.length && a.every((l, i) => l.id === b[i]!.id && l.path === b[i]!.path);
 
 const deps = buildDeps({
   dataDir: dir,
   log,
   onConfigSaved: (prev, next) => {
-    if (next.mediaRoot === prev.mediaRoot) return;
+    if (next.startWithWindows !== prev.startWithWindows) void applyAutostart(next.startWithWindows, log);
+    if (sameFolders(prev.libraries, next.libraries)) return;
     const old = watcher;
     watcher = null;
     old?.close().catch((err) => log.warn("watcher close failed", { error: err instanceof Error ? err.message : String(err) }));
-    startWatcher(next.mediaRoot);
+    startWatcher(next.libraries);
   },
   quit: () => void quit(),
 });
@@ -59,8 +66,10 @@ log.info(`Admin page: http://localhost:${port}/admin`);
 for (const ip of lanAddresses()) log.info(`LAN: http://${ip}:${port}`);
 
 const discovery = advertise(port, log);
-startWatcher(deps.config().mediaRoot);
+startWatcher(deps.config().libraries);
 const tray = startTray(port, log, { dataDir: dir });
+// Re-applied at every start so the Run entry follows the exe when the folder is moved.
+void applyAutostart(deps.config().startWithWindows, log);
 void deps.scanner.scan();
 
 let quitting = false;

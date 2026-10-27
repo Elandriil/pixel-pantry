@@ -17,7 +17,7 @@ function setup(ext = "mkv", write = true) {
     deps.db.query("UPDATE files SET rel_path = ? WHERE item_id = ?").run(`movies/Clip.${ext}`, id);
   }
   if (write) {
-    const path = join(deps.config().mediaRoot, `movies/Clip.${ext}`);
+    const path = join(deps.mediaRoot, `movies/Clip.${ext}`);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, bytes);
   }

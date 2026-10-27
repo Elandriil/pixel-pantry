@@ -10,7 +10,7 @@ import { ImageStore } from "../../src/metadata/images";
 import { TmdbClient } from "../../src/metadata/tmdb";
 import { OsClient } from "../../src/subtitles/opensubtitles";
 import type { FetchFn } from "../../src/types";
-import { fakeProbe, fakeTmdb, tmpDir } from "../helpers";
+import { fakeProbe, fakeTmdb, legacyLibraries, tmpDir } from "../helpers";
 
 export { seedMovie, seedShow } from "../helpers";
 
@@ -21,6 +21,8 @@ const noNetwork = (async (input: RequestInfo | URL) => {
 }) as unknown as FetchFn;
 
 export interface TestDeps extends Deps {
+  /** The folder whose `tv`, `anime` and `movies` subfolders are the configured libraries. */
+  mediaRoot: string;
   /** Paths passed to `trash`, one array per call. */
   trashed: string[][];
   /** Number of `quit()` calls. */
@@ -36,7 +38,8 @@ export function makeDeps(overrides: Partial<Deps> = {}): TestDeps {
   const db = openDb(":memory:");
   const repo = new Repo(db);
   const log = new Logger(join(dir, "logs", "server.log"));
-  let cfg: Config = { ...DEFAULT_CONFIG, mediaRoot: join(dir, "media") };
+  const mediaRoot = join(dir, "media");
+  let cfg: Config = { ...DEFAULT_CONFIG, libraries: legacyLibraries(mediaRoot) };
   let clock = NOW;
   let quits = 0;
   const trashed: string[][] = [];
@@ -50,7 +53,7 @@ export function makeDeps(overrides: Partial<Deps> = {}): TestDeps {
     saveConfig: (c) => {
       cfg = c;
     },
-    scanner: new Scanner({ repo, tmdb: tmdbFake, probe: probeFake.probe, mediaRoot: () => cfg.mediaRoot, log, now }),
+    scanner: new Scanner({ repo, tmdb: tmdbFake, probe: probeFake.probe, libraries: () => cfg.libraries, log, now }),
     tmdb: new TmdbClient({
       apiKey: "test",
       fetchFn: noNetwork,
@@ -63,6 +66,7 @@ export function makeDeps(overrides: Partial<Deps> = {}): TestDeps {
       trashed.push(paths);
     },
     now,
+    mediaRoot,
     quit: () => {
       quits++;
     },

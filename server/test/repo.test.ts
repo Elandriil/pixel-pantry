@@ -46,6 +46,11 @@ test("markFilesDeletedExcept marks vanished files and undelete clears it", () =>
   expect(repo.listLiveFiles().map((f) => f.rel_path)).toEqual(["b.mkv"]);
   // already-deleted files are not re-counted or re-stamped
   expect(repo.markFilesDeletedExcept(["b.mkv"], 100)).toBe(0);
+  // files under a kept prefix (a library folder missing right now) survive a scan that did not list them
+  repo.upsertFile(file("movies/c.mkv"));
+  expect(repo.markFilesDeletedExcept([], 101, ["movies/"])).toBe(1);
+  expect(repo.getFileByPath("movies/c.mkv")!.deleted_at).toBeNull();
+  expect(repo.getFileByPath("b.mkv")!.deleted_at).toBe(101);
   expect(repo.getFileByPath("a.mkv")!.deleted_at).toBe(99);
   repo.undeleteFile(a);
   expect(repo.getFileByPath("a.mkv")!.deleted_at).toBeNull();

@@ -6,15 +6,19 @@ First run
 1. Copy this folder anywhere (for example C:\PixelPantry).
 2. Double-click "Start Pixel Pantry.vbs" (hides the console window). Double-clicking
    PixelPantry.exe directly also works but shows a console window. Keep
-   ffprobe.exe in the same folder. For autostart, put a shortcut to the .vbs on
-   the desktop or in the Startup folder (Win+R, type shell:startup).
+   ffprobe.exe in the same folder. From then on the server starts with
+   Windows by itself ("Start with Windows" in the admin page settings, on by
+   default; untick it to stop that).
 3. If Windows SmartScreen warns about an unknown publisher, choose
    "More info" -> "Run anyway".
 4. When Windows Firewall asks, allow access on PRIVATE networks. This is
    needed so the TV can reach the server.
 5. A tray icon appears near the clock.
 6. Open http://localhost:8765/admin in a browser.
-7. Set the media folder (for example D:\Media) and save.
+7. Add the library folders: "Add folder", type the path (for example
+   D:\Media\tv) and pick its type (TV shows, Anime or Movies). Add as many
+   as you like (D:\Media\movies, D:\October movies, ...), then save.
+   Only these folders are read, so downloads elsewhere are ignored.
 8. TMDB API key: create a free account at https://www.themoviedb.org, go to
    Settings -> API, and paste the "API Read Access Token" or the v3 API key.
 9. Optional, for subtitles: create an account at https://www.opensubtitles.com,

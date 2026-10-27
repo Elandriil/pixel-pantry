@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 import type { ItemRow } from "../../library/repo";
 import type { OsSearch } from "../../subtitles/opensubtitles";
 import { openSubtitlesHash } from "../../subtitles/hash";
@@ -11,7 +11,7 @@ import type { SubtitleListResponse, SubtitleSearchResponse } from "../../types";
 import { jsonBody } from "../body";
 import type { Deps } from "../deps";
 import { HttpError } from "../errors";
-import { liveFiles, liveItem, parseId, sidecarsOf, sidecarTrack, subtitleTracks } from "./catalog";
+import { filePath, liveFiles, liveItem, parseId, sidecarsOf, sidecarTrack, subtitleTracks } from "./catalog";
 
 const CONTENT_TYPES: Record<SidecarTrack["format"], string> = {
   srt: "application/x-subrip",
@@ -39,7 +39,7 @@ export function subtitleRoutes(deps: Deps): Hono {
     const item = liveItem(deps, parseId(raw));
     const file = liveFiles(deps.repo.filesForItem(item.id))[0];
     if (!file) throw new HttpError(404, "Item has no file");
-    return { item, file, abs: join(deps.config().mediaRoot, file.rel_path) };
+    return { item, file, abs: filePath(deps, file) };
   };
 
   const searchQuery = (item: ItemRow): Omit<OsSearch, "hash"> => {

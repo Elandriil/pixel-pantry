@@ -1,6 +1,7 @@
 import { Hono, type MiddlewareHandler } from "hono";
+import { existsSync } from "node:fs";
 import { lanAddresses } from "../../net";
-import type { Config } from "../../config";
+import { isCategory, libraryConflict, newLibraryId, type Config, type Library } from "../../config";
 import { LOW_CONFIDENCE } from "../../library/scanner";
 import adminHtmlModule from "../admin/index.html" with { type: "text" };
 import { jsonBody } from "../body";
@@ -39,7 +40,7 @@ const mask = (v: string) => (v ? MASK : "");
 
 function maskedConfig(c: Config): Config {
   return {
-    mediaRoot: c.mediaRoot,
+    libraries: c.libraries,
     port: c.port,
     tmdbApiKey: mask(c.tmdbApiKey),
     opensubtitles: {
@@ -47,6 +48,7 @@ function maskedConfig(c: Config): Config {
       username: c.opensubtitles.username,
       password: mask(c.opensubtitles.password),
     },
+    startWithWindows: c.startWithWindows,
   };
 }
 
@@ -69,13 +71,30 @@ function cleanPath(v: string): string {
   return (m ? m[1]! : t).trim();
 }
 
-/** The new media folder; empty is only accepted while none has been set yet. */
-function mediaRootOf(v: unknown, old: string): string {
-  const s = str(v, "mediaRoot");
-  if (s === undefined) return old;
-  const root = cleanPath(s);
-  if (!root && old) throw new HttpError(400, "Media folder is required");
-  return root;
+/**
+ * The new library list. An entry without an id is a new folder and gets one; an entry with an id keeps it (so its
+ * files' rel_paths stay valid). Entries left out are removed, and their files leave the library at the next scan.
+ */
+function librariesOf(v: unknown, old: Library[]): Library[] {
+  if (v === undefined) return old;
+  if (!Array.isArray(v)) throw new HttpError(400, "libraries must be an array");
+  const out: Library[] = [];
+  for (const e of v) {
+    if (!e || typeof e !== "object" || Array.isArray(e)) throw new HttpError(400, "each library must be an object");
+    const { id, path, category } = e as Record<string, unknown>;
+    const folder = cleanPath(str(path, "libraries[].path") ?? "");
+    if (!folder) throw new HttpError(400, "Library folder path is required");
+    if (!isCategory(category)) throw new HttpError(400, "Library type must be tv, anime or movies");
+    const known = typeof id === "string" && id ? old.find((l) => l.id === id) : undefined;
+    if (id !== undefined && id !== null && !known) throw new HttpError(400, `Unknown library id: ${String(id)}`);
+    if (known && out.some((l) => l.id === known.id)) throw new HttpError(400, `Duplicate library id: ${known.id}`);
+    // a known id keeps its category too: changing it would leave files parsed one way attached to shows of the other
+    const lib: Library = { id: known?.id ?? newLibraryId(), path: folder, category: known?.category ?? category };
+    const conflict = libraryConflict(lib, out);
+    if (conflict) throw new HttpError(400, conflict);
+    out.push(lib);
+  }
+  return out;
 }
 
 /** Merges a partial Config-shaped body onto the current config. */
@@ -89,8 +108,10 @@ function mergeConfig(old: Config, body: Record<string, unknown>): Config {
     throw new HttpError(400, "opensubtitles must be an object");
   }
   const o = (os ?? {}) as Record<string, unknown>;
+  const sww = body.startWithWindows;
+  if (sww !== undefined && typeof sww !== "boolean") throw new HttpError(400, "startWithWindows must be a boolean");
   return {
-    mediaRoot: mediaRootOf(body.mediaRoot, old.mediaRoot),
+    libraries: librariesOf(body.libraries, old.libraries),
     port: (port as number | undefined) ?? old.port,
     tmdbApiKey: secret(body.tmdbApiKey, "tmdbApiKey", old.tmdbApiKey),
     opensubtitles: {
@@ -98,8 +119,11 @@ function mergeConfig(old: Config, body: Record<string, unknown>): Config {
       username: str(o.username, "opensubtitles.username") ?? old.opensubtitles.username,
       password: secret(o.password, "opensubtitles.password", old.opensubtitles.password),
     },
+    startWithWindows: (sww as boolean | undefined) ?? old.startWithWindows,
   };
 }
+
+const sameLibraries = (a: Library[], b: Library[]) => JSON.stringify(a) === JSON.stringify(b);
 
 const positiveInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
 
@@ -125,7 +149,7 @@ export function adminRoutes(deps: Deps): Hono<Env> {
       version: "1",
       port: cfg.port,
       lanAddresses: lanAddresses(),
-      mediaRoot: cfg.mediaRoot,
+      libraries: cfg.libraries.map((l) => ({ ...l, found: existsSync(l.path) })),
       scan,
       counts: {
         tv: repo.listShows("tv").length,
@@ -147,7 +171,7 @@ export function adminRoutes(deps: Deps): Hono<Env> {
     const keyChanged = next.tmdbApiKey !== old.tmdbApiKey;
     // a new key may match what the old (or missing) one could not
     if (keyChanged) repo.resetUnmatchedAttempts();
-    if (keyChanged || next.mediaRoot !== old.mediaRoot) void scanner.scan();
+    if (keyChanged || !sameLibraries(next.libraries, old.libraries)) void scanner.scan();
     return c.json({ restartRequired: next.port !== old.port });
   });
 

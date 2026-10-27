@@ -13,7 +13,6 @@ export interface ParsedVideo {
   parsedKey: string;
 }
 
-const CATEGORIES: readonly string[] = ["tv", "anime", "movies"];
 const SEASON_FOLDER = [/^season\s*(\d{1,2})$/i, /^S(\d{1,2})$/i];
 
 export function normalizeTitle(s: string): string {
@@ -99,10 +98,10 @@ function animeRelease(stem: string): { title: string; season: number | null; epi
   return null;
 }
 
-export function parseVideoPath(relPath: string): ParsedVideo | null {
+/** `relPath` is `<library id>/<path inside the library>`; the library's category decides how the name is read. */
+export function parseVideoPath(relPath: string, category: Category): ParsedVideo | null {
   const parts = relPath.split("/").filter(Boolean);
-  const category = parts[0] as Category;
-  if (parts.length < 2 || !CATEGORIES.includes(category)) return null;
+  if (parts.length < 2) return null;
   const kind = category === "movies" ? "movie" : "episode";
   const base = parts[parts.length - 1]!;
   const folders = parts.slice(1, -1);

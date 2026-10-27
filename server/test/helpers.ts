@@ -6,6 +6,7 @@ import type { ProbeResult } from "../src/library/probe";
 import type { Repo } from "../src/library/repo";
 import type { TmdbMovieDetails, TmdbSearchResult, TmdbSeason, TmdbTvDetails } from "../src/metadata/tmdb";
 import type { Category } from "../src/types";
+import { CATEGORIES, type Library } from "../src/config";
 
 const created: string[] = [];
 
@@ -17,6 +18,11 @@ export function tmpDir(): string {
   const d = mkdtempSync(join(tmpdir(), "pantry-test-"));
   created.push(d);
   return d;
+}
+
+/** The pre-library layout: `tv`, `anime` and `movies` under `base`, with the category as library id. */
+export function legacyLibraries(base: string): Library[] {
+  return CATEGORIES.map((c) => ({ id: c, path: join(base, c), category: c }));
 }
 
 export function touch(path: string, bytes = 0): void {

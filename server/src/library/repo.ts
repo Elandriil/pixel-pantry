@@ -233,10 +233,15 @@ export class Repo {
     return Number(r.lastInsertRowid);
   }
 
-  /** Marks every live file whose rel_path is not in livePaths as deleted. Returns how many changed. */
-  markFilesDeletedExcept(livePaths: string[], now: number): number {
+  /**
+   * Marks every live file whose rel_path is not in livePaths as deleted, except files whose rel_path starts with one
+   * of keepPrefixes (a library folder that is missing right now). Returns how many changed.
+   */
+  markFilesDeletedExcept(livePaths: string[], now: number, keepPrefixes: string[] = []): number {
     const keep = new Set(livePaths);
-    const stale = (this.q.fileLivePaths!.all() as { rel_path: string }[]).filter((r) => !keep.has(r.rel_path));
+    const stale = (this.q.fileLivePaths!.all() as { rel_path: string }[]).filter(
+      (r) => !keep.has(r.rel_path) && !keepPrefixes.some((p) => r.rel_path.startsWith(p)),
+    );
     this.db.transaction(() => {
       for (const r of stale) this.q.fileMarkDeleted!.run(now, r.rel_path);
     })();

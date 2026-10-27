@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { Category } from "../src/types";
 import { normalizeTitle, parseVideoPath } from "../src/library/parse";
 
 const rows: [string, string, number | null, number | null, number[], boolean][] = [
@@ -29,7 +30,7 @@ const rows: [string, string, number | null, number | null, number[], boolean][] 
 ];
 
 test.each(rows)("parseVideoPath %s", (path, title, year, season, episodes, absolute) => {
-  const p = parseVideoPath(path)!;
+  const p = parseVideoPath(path, path.split("/")[0] as Category)!;
   expect(p.title).toBe(title);
   expect(p.year).toBe(year);
   expect(p.season).toBe(season);
@@ -37,12 +38,18 @@ test.each(rows)("parseVideoPath %s", (path, title, year, season, episodes, absol
   expect(p.absolute).toBe(absolute);
 });
 
-test("non-category folder is null", () => {
-  expect(parseVideoPath("photos/x.mkv")).toBeNull();
+test("a file directly in the library folder is null", () => {
+  expect(parseVideoPath("tv", "tv")).toBeNull();
+});
+
+test("the library id is not part of the title and the type comes from the library", () => {
+  const p = parseVideoPath("lib-0a1b2c3d/Heat (1995)/Heat.mkv", "movies")!;
+  expect(p).toMatchObject({ category: "movies", kind: "movie", title: "Heat", year: 1995, parsedKey: "movies:heat:1995" });
+  expect(parseVideoPath("lib-0a1b2c3d/[Grp] Frieren - 03.mkv", "anime")).toMatchObject({ absolute: true, episodes: [3] });
 });
 
 test("parsedKey", () => {
-  expect(parseVideoPath(rows[0]![0])!.parsedKey).toBe("tv:severance:");
+  expect(parseVideoPath(rows[0]![0], "tv")!.parsedKey).toBe("tv:severance:");
 });
 
 test("normalizeTitle strips diacritics and punctuation", () => {

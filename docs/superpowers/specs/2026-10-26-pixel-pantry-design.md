@@ -73,7 +73,13 @@ contract, and the TV app is a thin client of it.
 - Server host: Windows PC, on whenever the TV is used (same as today with Plex).
 - TV: Sony Bravia running Google TV (Android TV). App is installed once via ADB
   sideload; no Play Store publishing.
-- Media folder layout (owner's existing Plex library, not to be renamed):
+- Library folders (owner's existing Plex library, not to be renamed). Each
+  folder the owner adds in the admin page is scanned as one type: TV shows,
+  Anime or Movies (change of 2026-10-27: originally one media root with fixed
+  `tv`, `anime` and `movies` subfolders; the root also holds unrelated files
+  and downloads in progress, and extra folders such as `October movies` must
+  be addable). Several folders may share a type; their shows merge. Nothing
+  outside the listed folders is read. Typical contents:
   - `tv/` — series. Usually `Show Name/Season 01/Show Name S01E01.mkv`, but
     season folders of different shows may sit directly under `tv/` and
     episode naming varies (`S01E05`, `1x05`, `Episode 5`, …).
@@ -118,8 +124,11 @@ A single process that does five things.
 
 ### 1. Library scan
 
-- Scans the configured media root. Categories are the top-level folders `tv`,
-  `anime`, `movies`; `photos` and anything else are ignored.
+- Scans the configured library folders, each as its type (TV shows, Anime or
+  Movies). A folder that is missing right now (unplugged drive) keeps its
+  files; a folder removed from the settings drops them at the next scan.
+  A pre-2026-10-27 config's media root migrates to one library per existing
+  `tv`, `anime`, `movies` subfolder.
 - Watches the folder for changes (filesystem watcher) and debounces into an
   incremental scan. Also runs a scan on startup, and on demand from the
   TV app or admin page ("Rescan"). **My call:** every scan is incremental:
@@ -197,8 +206,11 @@ A single process that does five things.
 
 - Status: server running, LAN address and port the TV should see, last scan
   time, scan in progress + progress, number of items per category.
-- Settings: media root folder, port, TMDB API key, OpenSubtitles credentials.
-  Saved to a config file next to the exe.
+- Settings: library folders (path + type, add/remove), port, TMDB API key,
+  OpenSubtitles credentials, "Start with Windows" (default on: the server
+  registers itself in the user's Run key at every start, so the owner never
+  has to set up autostart; unticking removes the entry). Saved to a config
+  file next to the exe.
 - Unmatched: list of unmatched shows/movies with a TMDB search box and
   "use this" per result.
 - Log: last N lines inline; full log in a file; "Open log folder" in the tray

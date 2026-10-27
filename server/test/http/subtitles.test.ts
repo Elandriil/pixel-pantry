@@ -12,7 +12,7 @@ const SRT = "1\n00:00:01,000 --> 00:00:02,000\nHello\n";
 function setup(os?: OsClient) {
   const deps = makeDeps(os ? { os } : {});
   const id = seedMovie(deps.repo, "Heat");
-  const video = join(deps.config().mediaRoot, "movies/Heat.mkv");
+  const video = join(deps.mediaRoot, "movies/Heat.mkv");
   touch(video, 1024);
   return { deps, id, video, app: buildApp(deps) };
 }
@@ -62,10 +62,10 @@ test("sidecar names with spaces are URL-encoded; unknown or traversal names are 
   const deps = makeDeps();
   const id = seedMovie(deps.repo, "Heat");
   deps.db.run("UPDATE files SET rel_path = ? WHERE item_id = ?", ["movies/Heat 1995.mkv", id]);
-  const video = join(deps.config().mediaRoot, "movies/Heat 1995.mkv");
+  const video = join(deps.mediaRoot, "movies/Heat 1995.mkv");
   touch(video, 10);
-  writeFileSync(join(deps.config().mediaRoot, "movies/Heat 1995.en.srt"), SRT);
-  writeFileSync(join(deps.config().mediaRoot, "x.srt"), SRT);
+  writeFileSync(join(deps.mediaRoot, "movies/Heat 1995.en.srt"), SRT);
+  writeFileSync(join(deps.mediaRoot, "x.srt"), SRT);
   const app = buildApp(deps);
   const [track] = (await request(app, `/api/items/${id}/subtitles`)).json.tracks;
   expect(track).toMatchObject({ id: "sidecar:Heat%201995.en.srt", url: `/api/items/${id}/subtitles/sidecar/Heat%201995.en.srt` });
@@ -130,7 +130,7 @@ test("search sends hash and episode info, upstream failure is 503", async () => 
   const s = seedShow(deps.repo, { title: "Lost", category: "tv", seasons: [[1, 2]] });
   deps.repo.updateShowMeta(s.showId, { tmdb_id: 4607 });
   const ep = s.itemIds[0]![1]!;
-  touch(join(deps.config().mediaRoot, "tv/Lost/S1E2.mkv"), 1024);
+  touch(join(deps.mediaRoot, "tv/Lost/S1E2.mkv"), 1024);
   const app = buildApp(deps);
 
   const r = await request(app, `/api/items/${ep}/subtitles/search`);

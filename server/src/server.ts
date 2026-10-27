@@ -45,7 +45,7 @@ export function buildDeps(opts: {
   });
   const images = new ImageStore({ dir: join(dataDir, "images"), fetchFn: fetch });
   const ffprobe = resolveFfprobePath();
-  const scanner = new Scanner({ repo, tmdb, probe: (p) => probeFile(ffprobe, p), mediaRoot: () => cfg.mediaRoot, log });
+  const scanner = new Scanner({ repo, tmdb, probe: (p) => probeFile(ffprobe, p), libraries: () => cfg.libraries, log });
 
   return {
     db,

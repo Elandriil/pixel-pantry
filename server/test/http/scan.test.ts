@@ -6,8 +6,8 @@ import { makeDeps, request } from "./helpers";
 
 test("scan POST returns 202 and status flips to scanning then idle", async () => {
   const deps = makeDeps();
-  // a category folder, so the scan walks instead of stopping at "No tv, anime or movies folder"
-  mkdirSync(join(deps.config().mediaRoot, "tv"), { recursive: true });
+  // every library folder exists, so the scan finishes without "Library folder not found"
+  for (const l of deps.config().libraries) mkdirSync(l.path, { recursive: true });
   const app = buildApp(deps);
   expect((await request(app, "/api/scan/status")).json.state).toBe("idle");
 

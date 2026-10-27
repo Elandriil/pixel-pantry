@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { Hono } from "hono";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
+import { libraryFilePath } from "../../config";
 import type { Track } from "../../library/probe";
 import type { FileRow, ItemRow, ShowRow } from "../../library/repo";
 import { imageUrl } from "../../metadata/images";
@@ -36,6 +37,13 @@ function episodeOrder(a: ItemRow, b: ItemRow): number {
 }
 
 /** Live files of an item, newest first (added_at, then id). */
+/** Absolute path of a file, or 404 once its library folder was removed from the settings. */
+export function filePath(deps: Deps, file: FileRow): string {
+  const abs = libraryFilePath(deps.config().libraries, file.rel_path);
+  if (!abs) throw new HttpError(404, "The file's library folder was removed");
+  return abs;
+}
+
 export function liveFiles(files: FileRow[]): FileRow[] {
   return files
     .filter((f) => f.deleted_at === null)
@@ -218,7 +226,8 @@ export async function sidecarsOf(videoAbsPath: string): Promise<SidecarTrack[]> 
 
 /** Embedded tracks of the file, then the sidecars next to it. */
 export async function subtitleTracks(deps: Deps, itemId: number, file: FileRow): Promise<SubtitleTrack[]> {
-  const sidecars = await sidecarsOf(join(deps.config().mediaRoot, file.rel_path));
+  const abs = libraryFilePath(deps.config().libraries, file.rel_path);
+  const sidecars = abs ? await sidecarsOf(abs) : [];
   return [...embeddedTracks(file), ...sidecars.map((t) => sidecarTrack(itemId, t))];
 }
 

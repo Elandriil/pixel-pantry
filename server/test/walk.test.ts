@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { listVideoFiles } from "../src/library/walk";
-import { tmpDir, touch } from "./helpers";
+import { legacyLibraries, tmpDir, touch } from "./helpers";
 
-test("listVideoFiles walks only category folders and applies skip rules", async () => {
+test("listVideoFiles walks only the library folders and applies skip rules", async () => {
   const root = tmpDir();
   touch(join(root, "tv/A/Season 01/A S01E01.mkv"), 5);
   touch(join(root, "tv/A/Season 01/A S01E01.sample.mkv"));
@@ -16,15 +16,40 @@ test("listVideoFiles walks only category folders and applies skip rules", async 
   touch(join(root, "photos/d.mkv"));
   touch(join(root, "other/e.mkv"));
 
-  const files = await listVideoFiles(root);
+  const files = await listVideoFiles(legacyLibraries(root));
   expect(files.map((f) => f.relPath)).toEqual([
     "anime/B - 01.mp4",
     "movies/C (2020)/C.mkv",
     "tv/A/Season 01/A S01E01.mkv",
   ]);
+  expect(files.map((f) => f.absPath)).toEqual([
+    join(root, "anime/B - 01.mp4"),
+    join(root, "movies/C (2020)/C.mkv"),
+    join(root, "tv/A/Season 01/A S01E01.mkv"),
+  ]);
   expect(files.map((f) => f.category)).toEqual(["anime", "movies", "tv"]);
   expect(files.map((f) => f.size)).toEqual([3, 7, 5]);
   for (const f of files) expect(f.mtime).toBeGreaterThan(0);
+});
+
+test("listVideoFiles prefixes each file with its library id and takes the library's type", async () => {
+  const base = tmpDir();
+  touch(join(base, "October Movies/Heat (1995)/Heat.mkv"), 2);
+  touch(join(base, "October Movies/notes.txt"));
+  touch(join(base, "stray.mkv"));
+  const files = await listVideoFiles([
+    { id: "lib-0a1b2c3d", path: join(base, "October Movies"), category: "movies" },
+    { id: "lib-missing", path: join(base, "nope"), category: "tv" },
+  ]);
+  expect(files).toEqual([
+    {
+      relPath: "lib-0a1b2c3d/Heat (1995)/Heat.mkv",
+      absPath: join(base, "October Movies/Heat (1995)/Heat.mkv"),
+      category: "movies",
+      size: 2,
+      mtime: files[0]!.mtime,
+    },
+  ]);
 });
 
 test("listVideoFiles skips entries that vanish mid-scan and keeps siblings", async () => {
@@ -37,7 +62,7 @@ test("listVideoFiles skips entries that vanish mid-scan and keeps siblings", asy
     if (p.endsWith("gone.mkv")) throw Object.assign(new Error("gone"), { code: "ENOENT" });
     return statSync(p);
   };
-  const files = await listVideoFiles(root, racing);
+  const files = await listVideoFiles(legacyLibraries(root), racing);
   expect(files.map((f) => f.relPath)).toEqual(["movies/M/m.mkv", "tv/A/a.mkv", "tv/A/z.mkv"]);
 });
 
@@ -47,5 +72,5 @@ test("listVideoFiles propagates non-ENOENT errors", async () => {
   const failing = async () => {
     throw Object.assign(new Error("denied"), { code: "EACCES" });
   };
-  await expect(listVideoFiles(root, failing)).rejects.toThrow("denied");
+  await expect(listVideoFiles(legacyLibraries(root), failing)).rejects.toThrow("denied");
 });

@@ -2,7 +2,9 @@ import { expect, spyOn, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { buildApp } from "../../src/http/app";
 import type { Scanner } from "../../src/library/scanner";
+import { join } from "node:path";
 import { makeDeps, request, seedMovie, seedShow } from "./helpers";
+import { tmpDir } from "../helpers";
 
 const LOCAL = { remoteAddr: "127.0.0.1" };
 const MASK = "••••";
@@ -63,7 +65,7 @@ test("status reports config, scan state and counts from seeded data", async () =
   expect(r.json).toMatchObject({
     version: "1",
     port: 8765,
-    mediaRoot: deps.config().mediaRoot,
+    libraries: deps.config().libraries.map((l) => ({ ...l, found: false })),
     scan: { state: "idle" },
     counts: { tv: 2, anime: 1, movies: 1 },
     lastScanError: null,
@@ -86,10 +88,11 @@ test("config GET masks secrets and PUT with masked values keeps the stored secre
   const g = await request(app, "/admin/api/config", undefined, LOCAL);
   expect(g.status).toBe(200);
   expect(g.json).toEqual({
-    mediaRoot: deps.config().mediaRoot,
+    libraries: deps.config().libraries,
     port: 8765,
     tmdbApiKey: MASK,
     opensubtitles: { apiKey: MASK, username: "me", password: MASK },
+    startWithWindows: true,
   });
 
   const scan = spyOn(deps.scanner, "scan").mockImplementation(() => idleStatus(deps.scanner));
@@ -111,15 +114,27 @@ test("config GET masks secrets and PUT with masked values keeps the stored secre
   expect((await request(app, "/admin/api/config", undefined, LOCAL)).json.tmdbApiKey).toBe("");
 });
 
-test("config PUT with a new mediaRoot saves it and triggers a scan; port change requires restart", async () => {
+test("config PUT with a new library list saves it and triggers a scan; port change requires restart", async () => {
   const deps = makeDeps();
   const scan = spyOn(deps.scanner, "scan").mockImplementation(() => idleStatus(deps.scanner));
   const app = buildApp(deps);
-  const r = await request(app, "/admin/api/config", json("PUT", { mediaRoot: "  D:\\Media  ", port: 9000 }), LOCAL);
+  const [tv] = deps.config().libraries;
+  const body = { libraries: [tv, { path: "  D:\\October Movies  ", category: "movies" }], port: 9000 };
+  const r = await request(app, "/admin/api/config", json("PUT", body), LOCAL);
   expect(r.status).toBe(200);
   expect(r.json).toEqual({ restartRequired: true });
-  expect(deps.config().mediaRoot).toBe("D:\\Media");
   expect(deps.config().port).toBe(9000);
+  const libs = deps.config().libraries;
+  expect(libs.length).toBe(2);
+  expect(libs[0]).toEqual(tv);
+  expect(libs[1]).toMatchObject({ path: "D:\\October Movies", category: "movies" });
+  expect(libs[1]!.id).toMatch(/^lib-[0-9a-f]{8}$/);
+  expect(scan).toHaveBeenCalledTimes(1);
+
+  // the same list again: nothing changes and no scan starts
+  const again = await request(app, "/admin/api/config", json("PUT", { libraries: libs }), LOCAL);
+  expect(again.status).toBe(200);
+  expect(deps.config().libraries).toEqual(libs);
   expect(scan).toHaveBeenCalledTimes(1);
 });
 
@@ -149,26 +164,69 @@ test("config PUT with a new TMDB key resets unmatched attempts and triggers a sc
   expect(deps.repo.getShow(matched.showId)!.match_attempted_at).toBe(10);
 });
 
-test("config PUT strips surrounding quotes from mediaRoot and rejects clearing it", async () => {
+test("config PUT keeps a known library's id and type, strips quotes, and accepts an empty list", async () => {
   const deps = makeDeps();
   spyOn(deps.scanner, "scan").mockImplementation(() => idleStatus(deps.scanner));
   const app = buildApp(deps);
-  for (const [raw, stored] of [[' "D:\\My Media" ', "D:\\My Media"], ["'E:\\TV'", "E:\\TV"]]) {
-    expect((await request(app, "/admin/api/config", json("PUT", { mediaRoot: raw }), LOCAL)).status).toBe(200);
-    expect(deps.config().mediaRoot).toBe(stored!);
-  }
-  const empty = await request(app, "/admin/api/config", json("PUT", { mediaRoot: '  ""  ' }), LOCAL);
-  expect(empty.status).toBe(400);
-  expect(empty.json).toEqual({ error: "Media folder is required" });
-  expect(deps.config().mediaRoot).toBe("E:\\TV");
+  const [tv] = deps.config().libraries;
+  const moved = { id: tv!.id, path: ' "E:\\My TV" ', category: "anime" };
+  expect((await request(app, "/admin/api/config", json("PUT", { libraries: [moved] }), LOCAL)).status).toBe(200);
+  expect(deps.config().libraries).toEqual([{ id: "tv", path: "E:\\My TV", category: "tv" }]);
+  expect((await request(app, "/admin/api/config", json("PUT", { libraries: [] }), LOCAL)).status).toBe(200);
+  expect(deps.config().libraries).toEqual([]);
 });
 
-test("config PUT accepts an empty mediaRoot while none is set", async () => {
+test("config PUT rejects bad libraries", async () => {
   const deps = makeDeps();
-  deps.saveConfig({ ...deps.config(), mediaRoot: "" });
+  spyOn(deps.scanner, "scan").mockImplementation(() => idleStatus(deps.scanner));
   const app = buildApp(deps);
-  expect((await request(app, "/admin/api/config", json("PUT", { mediaRoot: "", port: 8765 }), LOCAL)).status).toBe(200);
-  expect(deps.config().mediaRoot).toBe("");
+  const before = deps.config().libraries;
+  const tv = before[0]!;
+  const cases: [unknown, string][] = [
+    [{ libraries: "x" }, "libraries must be an array"],
+    [{ libraries: [{ path: "", category: "tv" }] }, "Library folder path is required"],
+    [{ libraries: [{ path: '""', category: "tv" }] }, "Library folder path is required"],
+    [{ libraries: [{ path: "D:\\X", category: "photos" }] }, "Library type must be tv, anime or movies"],
+    [{ libraries: [{ id: "lib-nope", path: "D:\\X", category: "tv" }] }, "Unknown library id: lib-nope"],
+    [{ libraries: [tv, tv] }, "Duplicate library id: tv"],
+    [{ libraries: [tv, { path: tv.path, category: "movies" }] }, `${tv.path} is already a library folder`],
+    [{ libraries: [tv, { path: join(tv.path, "Sub"), category: "movies" }] }, `${join(tv.path, "Sub")} is inside the library folder ${tv.path}`],
+    [{ libraries: [tv, { path: deps.mediaRoot, category: "movies" }] }, `${deps.mediaRoot} contains the library folder ${tv.path}`],
+    [{ startWithWindows: "yes" }, "startWithWindows must be a boolean"],
+  ];
+  for (const [body, error] of cases) {
+    const r = await request(app, "/admin/api/config", json("PUT", body), LOCAL);
+    expect([r.status, r.json]).toEqual([400, { error }]);
+  }
+  expect(deps.config().libraries).toEqual(before);
+});
+
+test("config PUT saves startWithWindows without starting a scan", async () => {
+  const deps = makeDeps();
+  const scan = spyOn(deps.scanner, "scan").mockImplementation(() => idleStatus(deps.scanner));
+  const app = buildApp(deps);
+  expect((await request(app, "/admin/api/config", json("PUT", { startWithWindows: false }), LOCAL)).status).toBe(200);
+  expect(deps.config().startWithWindows).toBe(false);
+  expect((await request(app, "/admin/api/config", undefined, LOCAL)).json.startWithWindows).toBe(false);
+  expect(scan).not.toHaveBeenCalled();
+});
+
+test("status lists each library folder with whether it exists", async () => {
+  const deps = makeDeps();
+  const app = buildApp(deps);
+  const existing = tmpDir();
+  deps.saveConfig({
+    ...deps.config(),
+    libraries: [
+      { id: "lib-11111111", path: existing, category: "movies" },
+      { id: "lib-22222222", path: join(existing, "nope"), category: "tv" },
+    ],
+  });
+  const r = await request(app, "/admin/api/status", undefined, LOCAL);
+  expect(r.json.libraries).toEqual([
+    { id: "lib-11111111", path: existing, category: "movies", found: true },
+    { id: "lib-22222222", path: join(existing, "nope"), category: "tv", found: false },
+  ]);
 });
 
 test("config PUT rejects an invalid port", async () => {
@@ -281,7 +339,7 @@ test("match on a movie sets a movie override and clears its tmdb id; missing ent
 
 test("admin scan, log and quit", async () => {
   const deps = makeDeps();
-  mkdirSync(deps.config().mediaRoot, { recursive: true });
+  mkdirSync(deps.mediaRoot, { recursive: true });
   const movieId = seedMovie(deps.repo, "Odd Film");
   deps.repo.setItemMatchError(movieId, "No TMDB match", 10);
   const app = buildApp(deps);

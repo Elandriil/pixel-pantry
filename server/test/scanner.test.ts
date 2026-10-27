@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { rmSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { openDb } from "../src/db/db";
 import type { ProbeResult } from "../src/library/probe";
@@ -8,12 +8,18 @@ import { Scanner, type TmdbLike } from "../src/library/scanner";
 import { Logger } from "../src/log";
 import { TmdbClient, type TmdbSeason, type TmdbTvDetails } from "../src/metadata/tmdb";
 import type { FetchFn } from "../src/types";
-import { fakeProbe, fakeTmdb, tmpDir, touch } from "./helpers";
+import type { Library } from "../src/config";
+import { fakeProbe, fakeTmdb, legacyLibraries, tmpDir, touch } from "./helpers";
 
 const DAY = 24 * 60 * 60 * 1000;
 
-function setup(opts: { root?: string; probe?: (absPath: string) => Promise<ProbeResult>; tmdb?: TmdbLike } = {}) {
+function setup(
+  opts: { root?: string; libraries?: Library[]; probe?: (absPath: string) => Promise<ProbeResult>; tmdb?: TmdbLike } = {},
+) {
   const root = opts.root === undefined ? tmpDir() : opts.root;
+  let libraries = opts.libraries ?? legacyLibraries(root);
+  // the default layout's three folders exist (a missing one is reported as lastError); a missing root stays missing
+  if (opts.libraries === undefined && existsSync(root)) for (const l of libraries) mkdirSync(l.path, { recursive: true });
   const repo = new Repo(openDb(":memory:"));
   const tmdb = fakeTmdb();
   const probe = fakeProbe();
@@ -23,7 +29,7 @@ function setup(opts: { root?: string; probe?: (absPath: string) => Promise<Probe
     repo,
     tmdb: opts.tmdb ?? tmdb,
     probe: opts.probe ?? probe.probe,
-    mediaRoot: () => root,
+    libraries: () => libraries,
     log,
     now: () => clock.t,
   });
@@ -31,7 +37,10 @@ function setup(opts: { root?: string; probe?: (absPath: string) => Promise<Probe
     touch(join(root, rel), 10);
     return rel;
   };
-  return { root, repo, tmdb, probe, clock, scanner, file, log };
+  const setLibraries = (l: Library[]) => {
+    libraries = l;
+  };
+  return { root, repo, tmdb, probe, clock, scanner, file, log, setLibraries };
 }
 
 function tvDetails(id: number, name: string, seasons: [number, number][]): TmdbTvDetails {
@@ -608,28 +617,100 @@ test("probe failure is stored and scan continues", async () => {
   expect(ctx.repo.getFileByPath(b)!.duration).toBe(1200);
 });
 
-test("missing media folder sets lastError", async () => {
+test("no library folder found sets lastError and touches nothing", async () => {
   const root = join(tmpDir(), "nope");
   const ctx = setup({ root });
   const st = await ctx.scanner.scan();
-  expect(st.lastError).toBe(`Media folder not found: ${root}`);
-  expect(st.state).toBe("idle");
-});
-
-test("media folder without tv, anime or movies sets lastError", async () => {
-  const root = tmpDir();
-  touch(join(root, "Severance", "Severance S01E01.mkv"), 10);
-  const ctx = setup({ root });
-  const st = await ctx.scanner.scan();
-  expect(st.lastError).toBe(`No tv, anime or movies folder in ${root}`);
+  expect(st.lastError).toBe(`Library folder not found: ${join(root, "tv")}, ${join(root, "anime")}, ${join(root, "movies")}`);
   expect(st.state).toBe("idle");
   expect(st.phase).toBe("done");
   expect(ctx.probe.calls).toEqual([]);
 });
 
-test("empty media folder setting sets lastError", async () => {
-  const ctx = setup({ root: "" });
-  expect((await ctx.scanner.scan()).lastError).toBe("Media folder not set");
+test("no library folders set sets lastError", async () => {
+  const ctx = setup({ libraries: [] });
+  expect((await ctx.scanner.scan()).lastError).toBe("No library folders set");
+});
+
+test("libraries with generated ids: files are stored under the id and parsed by the library's type", async () => {
+  const base = tmpDir();
+  const libraries: Library[] = [
+    { id: "lib-aa11", path: join(base, "October Movies"), category: "movies" },
+    { id: "lib-bb22", path: join(base, "Shows"), category: "tv" },
+  ];
+  touch(join(base, "October Movies", "Heat (1995)", "Heat.mkv"), 10);
+  touch(join(base, "Shows", "Severance", "Severance S01E01.mkv"), 10);
+  touch(join(base, "Downloads", "stray.mkv"), 10);
+  const ctx = setup({ libraries });
+  const st = await ctx.scanner.scan();
+  expect(st.lastError).toBeNull();
+  expect(ctx.repo.listLiveFiles().map((f) => [f.rel_path, f.category])).toEqual([
+    ["lib-aa11/Heat (1995)/Heat.mkv", "movies"],
+    ["lib-bb22/Severance/Severance S01E01.mkv", "tv"],
+  ]);
+  expect(ctx.probe.calls).toEqual([join(base, "October Movies", "Heat (1995)", "Heat.mkv"), join(base, "Shows", "Severance", "Severance S01E01.mkv")]);
+  expect(ctx.repo.listMovies("movies").map((m) => m.title)).toEqual(["Heat"]);
+  expect(ctx.repo.listShows("tv").map((s) => s.title)).toEqual(["Severance"]);
+});
+
+test("two libraries of one type group the same show together", async () => {
+  const base = tmpDir();
+  const libraries: Library[] = [
+    { id: "tv", path: join(base, "tv"), category: "tv" },
+    { id: "lib-cc33", path: join(base, "More TV"), category: "tv" },
+  ];
+  touch(join(base, "tv", "Severance", "Severance S01E01.mkv"), 10);
+  touch(join(base, "More TV", "Severance S01E02.mkv"), 10);
+  const ctx = setup({ libraries });
+  await ctx.scanner.scan();
+  const shows = ctx.repo.listShows("tv");
+  expect(shows.map((s) => s.title)).toEqual(["Severance"]);
+  expect(ctx.repo.listEpisodes(shows[0]!.id).map((e) => e.episode_number)).toEqual([1, 2]);
+});
+
+test("a missing library folder keeps its files while the others are scanned", async () => {
+  const base = tmpDir();
+  const libraries: Library[] = [
+    { id: "tv", path: join(base, "tv"), category: "tv" },
+    { id: "movies", path: join(base, "movies"), category: "movies" },
+  ];
+  touch(join(base, "tv", "Severance", "Severance S01E01.mkv"), 10);
+  touch(join(base, "movies", "Heat (1995).mkv"), 10);
+  const ctx = setup({ libraries });
+  await ctx.scanner.scan();
+  expect(ctx.repo.listLiveFiles().length).toBe(2);
+
+  rmSync(join(base, "movies"), { recursive: true });
+  touch(join(base, "tv", "Severance", "Severance S01E02.mkv"), 10);
+  const st = await ctx.scanner.scan();
+  expect(st.lastError).toBe(`Library folder not found: ${join(base, "movies")}`);
+  expect(ctx.repo.listLiveFiles().map((f) => f.rel_path)).toEqual([
+    "movies/Heat (1995).mkv",
+    "tv/Severance/Severance S01E01.mkv",
+    "tv/Severance/Severance S01E02.mkv",
+  ]);
+  expect(ctx.repo.listMovies("movies").length).toBe(1);
+});
+
+test("removing a library from the settings hides its files at the next scan", async () => {
+  const base = tmpDir();
+  const tv: Library = { id: "tv", path: join(base, "tv"), category: "tv" };
+  const movies: Library = { id: "movies", path: join(base, "movies"), category: "movies" };
+  touch(join(base, "tv", "Severance", "Severance S01E01.mkv"), 10);
+  touch(join(base, "movies", "Heat (1995).mkv"), 10);
+  const ctx = setup({ libraries: [tv, movies] });
+  await ctx.scanner.scan();
+  expect(ctx.repo.listMovies("movies").length).toBe(1);
+
+  ctx.setLibraries([tv]);
+  const st = await ctx.scanner.scan();
+  expect(st.lastError).toBeNull();
+  expect(ctx.repo.listLiveFiles().map((f) => f.rel_path)).toEqual(["tv/Severance/Severance S01E01.mkv"]);
+  expect(ctx.repo.listMovies("movies").length).toBe(0);
+  // the file comes back, with its id and the movie's progress, when the folder is added again under the same id
+  ctx.setLibraries([tv, movies]);
+  await ctx.scanner.scan();
+  expect(ctx.repo.listMovies("movies").length).toBe(1);
 });
 
 test("episodes TMDB does not list do not refetch their season on rescan", async () => {

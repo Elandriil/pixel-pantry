@@ -16,8 +16,17 @@
   button.secondary { background: #3a3f47; }
   button.danger { background: #b3393b; }
   button:disabled { opacity: .5; cursor: default; }
-  input { background: #121417; color: inherit; border: 1px solid #3a3f47; border-radius: 4px; padding: 5px 8px; font: inherit; }
+  input, select { background: #121417; color: inherit; border: 1px solid #3a3f47; border-radius: 4px; padding: 5px 8px; font: inherit; }
   label { display: grid; grid-template-columns: 180px 1fr; align-items: center; gap: 8px; margin: 6px 0; }
+  label.check { grid-template-columns: 180px auto; justify-content: start; }
+  label.check input { width: 16px; height: 16px; margin: 0; }
+  .libs { display: grid; grid-template-columns: 180px 1fr; gap: 8px; margin: 6px 0; align-items: start; }
+  .libs .list { display: grid; gap: 6px; }
+  .lib { display: flex; gap: 6px; align-items: center; }
+  .lib input { flex: 1; }
+  .lib select { width: 110px; }
+  .lib .missing { color: #ff6b6b; font-size: 12px; white-space: nowrap; }
+  ul.folders { list-style: none; padding: 0; margin: 0; }
   .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #3a3f47; }
   .badge.on { background: #24713c; }
   .error { color: #ff6b6b; }
@@ -50,7 +59,7 @@
     <p id="st-error" class="error banner" hidden></p>
     <dl>
       <dt>Open on TV</dt><dd id="st-urls"></dd>
-      <dt>Media folder</dt><dd id="st-root"></dd>
+      <dt>Library folders</dt><dd><ul id="st-libs" class="folders"></ul></dd>
       <dt>Last scan</dt><dd id="st-last"></dd>
       <dt>Scan</dt><dd id="st-scan"></dd>
       <dt>Library</dt><dd id="st-counts"></dd>
@@ -61,12 +70,20 @@
   <section id="settings">
     <h2>Settings</h2>
     <form id="settings-form">
-      <label>Media folder <input name="mediaRoot" placeholder="D:\Media"></label>
+      <div class="libs">
+        <span>Library folders</span>
+        <div>
+          <div id="lib-list" class="list"></div>
+          <button type="button" id="lib-add" class="secondary" style="margin-top:6px">Add folder</button>
+          <p class="muted" style="margin:4px 0 0">Each folder is scanned as one type. Subfolders and files are indexed as they are; nothing outside these folders is read.</p>
+        </div>
+      </div>
       <label>Port <input name="port" type="number" min="1" max="65535"></label>
       <label>TMDB API key <input name="tmdbApiKey" type="password" autocomplete="off"></label>
       <label>OpenSubtitles API key <input name="osApiKey" type="password" autocomplete="off"></label>
       <label>OpenSubtitles username <input name="osUsername" autocomplete="off"></label>
       <label>OpenSubtitles password <input name="osPassword" type="password" autocomplete="off"></label>
+      <label class="check">Start with Windows <input name="startWithWindows" type="checkbox"></label>
       <button type="submit">Save</button>
       <span id="settings-msg" class="muted"></span>
       <p id="restart-note" class="note" hidden>Restart required to apply the new port.</p>
@@ -119,7 +136,16 @@ async function refreshStatus() {
     scanning = s.scan.state === "scanning";
     const urls = s.lanAddresses.map((ip) => "http://" + ip + ":" + s.port);
     $("st-urls").textContent = urls.length ? urls.join("  ") : "No network address found";
-    $("st-root").textContent = s.mediaRoot || "Not set";
+    $("st-libs").replaceChildren(
+      ...(s.libraries.length
+        ? s.libraries.map((l) =>
+            el("li", {}, [
+              l.path + " ",
+              el("span", { className: "badge", textContent: CATEGORY_NAMES[l.category] || l.category }),
+              l.found ? "" : el("span", { className: "error", textContent: " not found" }),
+            ]))
+        : [el("li", { className: "muted", textContent: "None set" })]),
+    );
     $("st-last").textContent = s.scan.finishedAt ? new Date(s.scan.finishedAt).toLocaleString() : "Never";
     $("st-scan").textContent = scanning
       ? "Scanning (" + s.scan.phase + "): " + s.scan.filesProcessed + " / " + s.scan.filesSeen + " files"
@@ -144,10 +170,39 @@ async function refreshStatus() {
 // settings
 
 const form = $("settings-form");
+const CATEGORY_NAMES = { tv: "TV shows", anime: "Anime", movies: "Movies" };
+
+function libraryRow(lib) {
+  const path = el("input", { value: lib.path || "", placeholder: "D:\\Media\\tv" });
+  const type = el("select", { disabled: !!lib.id }, Object.entries(CATEGORY_NAMES).map(([v, t]) => el("option", { value: v, textContent: t })));
+  type.value = lib.category || "tv";
+  if (lib.id) type.title = "The type of an existing folder cannot change: remove it and add it again.";
+  const remove = el("button", { type: "button", className: "secondary", textContent: "Remove" });
+  const row = el("div", { className: "lib" }, [path, type, remove]);
+  row.dataset.id = lib.id || "";
+  remove.addEventListener("click", () => row.remove());
+  return row;
+}
+
+function readLibraries() {
+  return [...$("lib-list").children].map((row) => {
+    const [path, type] = row.querySelectorAll("input, select");
+    const lib = { path: path.value, category: type.value };
+    if (row.dataset.id) lib.id = row.dataset.id;
+    return lib;
+  });
+}
+
+$("lib-add").addEventListener("click", () => {
+  const row = libraryRow({});
+  $("lib-list").append(row);
+  row.querySelector("input").focus();
+});
 
 async function loadSettings() {
   const c = await api("config");
-  form.mediaRoot.value = c.mediaRoot;
+  $("lib-list").replaceChildren(...c.libraries.map(libraryRow));
+  form.startWithWindows.checked = c.startWithWindows;
   form.port.value = c.port;
   form.tmdbApiKey.value = c.tmdbApiKey;
   form.osApiKey.value = c.opensubtitles.apiKey;
@@ -162,7 +217,8 @@ form.addEventListener("submit", async (e) => {
     const r = await api("config", {
       method: "PUT",
       body: {
-        mediaRoot: form.mediaRoot.value,
+        libraries: readLibraries(),
+        startWithWindows: form.startWithWindows.checked,
         port: Number(form.port.value),
         tmdbApiKey: form.tmdbApiKey.value,
         opensubtitles: {

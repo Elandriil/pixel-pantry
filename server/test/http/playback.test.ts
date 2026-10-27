@@ -114,7 +114,7 @@ test("delete show trashes the show folder and the show is gone after rescan", as
       for (const p of paths) rmSync(p, { recursive: true, force: true });
     },
   });
-  const root = deps.config().mediaRoot;
+  const root = deps.mediaRoot;
   const s = seedShow(deps.repo, { title: "Severance", category: "tv", seasons: [[1, 2]] });
   touch(join(root, "tv/Severance/S1E1.mkv"));
   touch(join(root, "tv/Severance/S1E2.mkv"));
@@ -133,7 +133,7 @@ test("delete show trashes the show folder and the show is gone after rescan", as
 
 test("delete show trashes single files when its folder holds another show's files", async () => {
   const { deps, app } = setup();
-  const root = deps.config().mediaRoot;
+  const root = deps.mediaRoot;
   const s = seedShow(deps.repo, { title: "Mixed", category: "tv", seasons: [[1]] });
   const other = seedShow(deps.repo, { title: "Other", category: "tv", seasons: [[1]] });
   deps.db.run("UPDATE files SET rel_path = 'tv/Mixed/Other.S01E01.mkv' WHERE item_id = ?", [other.itemIds[0]![0]!]);
@@ -148,7 +148,7 @@ test("delete show trashes single files when its folder holds another show's file
 
 test("delete movie trashes the file and its sidecars; non-movie is 404; trash failure is 500", async () => {
   const { deps, app } = setup();
-  const root = deps.config().mediaRoot;
+  const root = deps.mediaRoot;
   const id = seedMovie(deps.repo, "Heat");
   touch(join(root, "movies/Heat.mkv"));
   touch(join(root, "movies/Heat.en.srt"));
@@ -163,7 +163,7 @@ test("delete movie trashes the file and its sidecars; non-movie is 404; trash fa
 
   const failing = setup({ trash: async () => { throw new Error("Finder said no"); } });
   const m = seedMovie(failing.deps.repo, "Alien");
-  touch(join(failing.deps.config().mediaRoot, "movies/Alien.mkv"));
+  touch(join(failing.deps.mediaRoot, "movies/Alien.mkv"));
   const f = await request(failing.app, `/api/movies/${m}`, { method: "DELETE" });
   expect(f.status).toBe(500);
   expect(f.json).toEqual({ error: "Finder said no" });
@@ -203,7 +203,7 @@ test("progress past the duration is clamped and counts as watched", async () => 
 
 test("delete with the video already gone from disk trashes nothing and still hides the item", async () => {
   const { deps, app } = setup();
-  const root = deps.config().mediaRoot;
+  const root = deps.mediaRoot;
   const gone = seedMovie(deps.repo, "Gone");
   const id = seedMovie(deps.repo, "Heat");
   touch(join(root, "movies/Heat.mkv"));

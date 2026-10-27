@@ -1,6 +1,6 @@
 # Pixel Pantry server
 
-Home media server (Bun + TypeScript). Scans a media folder, matches titles via TMDB, serves the library and streams files over HTTP, advertises itself on the LAN (mDNS), and shows a tray icon on Windows.
+Home media server (Bun + TypeScript). Scans the configured library folders, matches titles via TMDB, serves the library and streams files over HTTP, advertises itself on the LAN (mDNS), and shows a tray icon on Windows.
 
 ## Development
 
@@ -36,10 +36,10 @@ Note: `--windows-hide-console` is only available when building on Windows, so th
 
 ## First run on Windows
 
-1. Double-click `Start Pixel Pantry.vbs` (hides the console window; double-clicking `PixelPantry.exe` directly also works but shows a console window). A shortcut to the .vbs on the desktop or in the Startup folder (`shell:startup`) makes it start with Windows. SmartScreen: "More info" then "Run anyway".
+1. Double-click `Start Pixel Pantry.vbs` (hides the console window; double-clicking `PixelPantry.exe` directly also works but shows a console window). SmartScreen: "More info" then "Run anyway". From then on it starts with Windows by itself ("Start with Windows" in the admin settings, on by default: a `Pixel Pantry` value in `HKCU\...\Run` pointing at the .vbs, refreshed at every start, so moving the folder is fine).
 2. Allow it through Windows Firewall on **private** networks when prompted.
 3. Open `http://localhost:8765/admin`.
-4. Set the media folder and a TMDB key (free account at themoviedb.org, Settings, API; paste the "API Read Access Token" or v3 key).
+4. Add the library folders (each with its type: TV shows, Anime or Movies; e.g. `D:\Media\tv`, `D:\Media\movies`, `D:\October movies`) and a TMDB key (free account at themoviedb.org, Settings, API; paste the "API Read Access Token" or v3 key).
 5. Optional: OpenSubtitles account (opensubtitles.com, API consumer key plus username and password).
 6. Click "Rescan now". The TV app finds the server automatically.
 
