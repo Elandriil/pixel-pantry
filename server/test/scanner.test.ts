@@ -635,6 +635,26 @@ test("a parser improvement re-groups an unchanged file at the next scan without 
   expect(ctx.repo.listShows("tv").map((s) => s.title)).toEqual(["Ape maga"]);
 });
 
+test("a file re-classified as an extra is detached from the episode it played as", async () => {
+  const ctx = setup();
+  const real = ctx.file("tv/Buffy/Buffy.S01E01.mkv");
+  const extra = ctx.file("tv/Buffy/Buffy.S01EX1.Interview.mkv");
+  await ctx.scanner.scan();
+  const realRow = ctx.repo.getFileByPath(real)!;
+  const extraRow = ctx.repo.getFileByPath(extra)!;
+  expect(extraRow.parsed).toBeNull();
+  expect(extraRow.item_id).toBeNull();
+  // what an older parser did: the extra parsed as S01E01 and attached to that episode
+  ctx.repo.setFileParsed(extraRow.id, realRow.parsed);
+  ctx.repo.setFileItem(extraRow.id, realRow.item_id);
+  expect(ctx.repo.filesForItem(realRow.item_id!).length).toBe(2);
+
+  ctx.clock.t += 1000;
+  await ctx.scanner.scan();
+  expect(ctx.repo.getFileByPath(extra)!.item_id).toBeNull();
+  expect(ctx.repo.filesForItem(realRow.item_id!).map((f) => f.rel_path)).toEqual([real]);
+});
+
 test("no library folder found sets lastError and touches nothing", async () => {
   const root = join(tmpDir(), "nope");
   const ctx = setup({ root });

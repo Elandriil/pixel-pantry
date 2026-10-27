@@ -29,6 +29,12 @@ const rows: [string, string, number | null, number | null, number[], boolean][] 
   ["tv/Ape maga[1970] 01- L'ape magà comincia a volare.mp4", "Ape maga", 1970, null, [1], false],
   ["tv/Ape maga[1970]/Ape maga[1970] 02- Vai,vai Ape magà.mp4", "Ape maga", 1970, null, [2], false],
   ["tv/Lost [2004]/Lost S01E01.mkv", "Lost", 2004, 1, [1], false],
+  ["tv/Band Of Brothers/Band Of Brothers Documentry 2001 (1080p x265 Joy).mkv", "Band Of Brothers Documentry", 2001, null, [], false],
+  ["tv/Band Of Brothers/Band Of Brothers Part 1 Currahee (1080p x265 Joy).mkv", "Band Of Brothers", null, null, [1], false],
+  ["tv/Buffy The Vampire Slayer Complete Series DVDRip 576p x264 (MKV)/Season 2/Buffy.S02E01.mkv", "Buffy", null, 2, [1], false],
+  ["tv/Buffy The Vampire Slayer (1992) 720p BRRip x264 AC3 5.1/Buffy.1x05.mkv", "Buffy", 1992, 1, [5], false],
+  ["tv/The Beast in Me (2025)/The Beast in Me (2025) - S01E01 - Sick Puppy (1080p NF WEB-DL x265 Ghost).mkv", "The Beast in Me", 2025, 1, [1], false],
+  ["tv/McDonald and Dodds/McDonald and Dodds_S04E01_The Rule of 3.mkv", "McDonald and Dodds", null, 4, [1], false],
   ["anime/[SubsPlease] One Piece - 1100 (1080p) [ABCD].mkv", "One Piece", null, null, [1100], true],
 ];
 
@@ -39,6 +45,33 @@ test.each(rows)("parseVideoPath %s", (path, title, year, season, episodes, absol
   expect(p.season).toBe(season);
   expect(p.episodes).toEqual(episodes);
   expect(p.absolute).toBe(absolute);
+});
+
+test("extras are never episodes: S01EX1, Extra.*, -trailer, -featurette", () => {
+  for (const p of [
+    "tv/Buffy/Buffy.S01EX1.Interview.With.Joss.Whedon.&.David.Boreanaz.mkv",
+    "tv/Buffy/Buffy.S06EXA.Outtakes.mkv",
+    "tv/Buffy The Vampire Slayer (1992) 720p BRRip x264 AC3 5.1/Extra.Theatrical.Trailer.mkv",
+    "movies/Heat (1995)/Heat (1995)-trailer.mkv",
+    "movies/Heat (1995)/Heat.1995.featurette.mkv",
+  ]) expect(parseVideoPath(p, p.split("/")[0] as Category)).toBeNull();
+  // titles that merely contain such a word are fine
+  expect(parseVideoPath("movies/The Interview (2014)/The Interview (2014).mkv", "movies")!.title).toBe("The Interview");
+  expect(parseVideoPath("tv/Extras/Extras S01E01.mkv", "tv")!.title).toBe("Extras");
+});
+
+test("release-tag folder names are cut at the first tag", () => {
+  // the folder names the show when the file name does not
+  expect(parseVideoPath("tv/Shetland.S01.720p.DSNP.WEBRip.x264-GalaxyTV/S01E01.mkv", "tv")!.title).toBe("Shetland");
+  expect(parseVideoPath("tv/Buffy The Vampire Slayer Complete Series DVDRip 576p x264 (MKV)/Season 2/S02E01.mkv", "tv")).toMatchObject({
+    title: "Buffy The Vampire Slayer",
+    season: 2,
+    episodes: [1],
+  });
+  expect(parseVideoPath("tv/Buffy The Vampire Slayer (1992) 720p BRRip x264 AC3 5.1/1x05.mkv", "tv")).toMatchObject({
+    title: "Buffy The Vampire Slayer",
+    year: 1992,
+  });
 });
 
 test("a file directly in the library folder is null", () => {

@@ -14,6 +14,21 @@ export interface ParsedVideo {
 }
 
 const SEASON_FOLDER = [/^season\s*(\d{1,2})$/i, /^S(\d{1,2})$/i];
+/**
+ * Bonus material named the Plex way: `Show.S01EX1.Interview.mkv` (EX = extra, also `S06EXA`), `Extra.Trailer.mkv`,
+ * `Movie-trailer.mkv`, `...-featurette.mkv`. Never an episode: `S01EX1` would otherwise land on S01E01 and play
+ * instead of the real episode.
+ */
+const EXTRA_MARKER = /\bS\d{1,2}EX[0-9A-Z]{1,3}\b/i;
+const EXTRA_NAMES = [/^extras?[ ._-]/i, /[ ._-](trailer|featurette|behind[ ._-]?the[ ._-]?scenes|deleted[ ._-]?scenes?|extras?|sample)$/i];
+/** An explicit episode marker; without one, a 4-digit year (`Documentary 2001`) is not season 20 episode 1. */
+const EXPLICIT_EPISODE = /\bS\d{1,2}\s*E\d{1,3}\b|\b\d{1,2}x\d{1,3}\b/i;
+/** `Extras S01E01` is an episode of the show "Extras"; `Extra.Trailer` is not an episode of anything. */
+export const isExtra = (stem: string): boolean =>
+  EXTRA_MARKER.test(stem) || (!EXPLICIT_EPISODE.test(stem) && EXTRA_NAMES.some((re) => re.test(stem)));
+/** Release tags: everything from the first one on is not part of a folder's title. */
+const RELEASE_TAGS =
+  /[\s._(\[-]+(?:\d{3,4}p|2160p|4k|uhd|bluray|blu-ray|brrip|bdrip|webrip|web-dl|webdl|hdtv|dvdrip|dvdscr|hdrip|s\d{2}(?:e\d{2,3})?|season[\s._-]*\d{1,2}|x264|x265|h\.?264|h\.?265|hevc|avc|xvid|complete(?:[\s._-]+series)?|proper|repack|remux|multi|dual[\s._-]?audio)\b.*$/i;
 
 export function normalizeTitle(s: string): string {
   return s
@@ -35,6 +50,7 @@ function seasonFromFolder(name: string): number | null {
 
 function cleanFolderTitle(name: string): string {
   return name
+    .replace(RELEASE_TAGS, "")
     .replace(/\s*\(?\b(?:19|20)\d{2}\b\)?\s*$/, "")
     .replace(/[._]/g, " ")
     .replace(/\s+/g, " ")
@@ -106,6 +122,7 @@ export function parseVideoPath(relPath: string, category: Category): ParsedVideo
   const base = parts[parts.length - 1]!;
   const folders = parts.slice(1, -1);
   const stem = base.slice(0, base.length - posix.extname(base).length);
+  if (isExtra(stem)) return null;
 
   let lib: ReturnType<typeof filenameParse> | null = null;
   try {
@@ -114,6 +131,15 @@ export function parseVideoPath(relPath: string, category: Category): ParsedVideo
     lib = null;
   }
   const libAny = lib as { title?: string; year?: string | number; seasons?: number[]; episodeNumbers?: number[] } | null;
+  if (libAny && kind === "episode" && !EXPLICIT_EPISODE.test(stem) && libAny.seasons?.[0] !== undefined && libAny.episodeNumbers?.[0] !== undefined) {
+    // the generic parser reads `2001` as 20x01 when nothing else looks like an episode
+    const asYear = `${libAny.seasons[0]}${String(libAny.episodeNumbers[0]).padStart(2, "0")}`;
+    if (/^(?:19|20)\d{2}$/.test(asYear) && new RegExp(`\\b${asYear}\\b`).test(stem)) {
+      libAny.seasons = [];
+      libAny.episodeNumbers = [];
+      libAny.year ??= asYear;
+    }
+  }
 
   const anime = category === "anime" ? animeRelease(stem) : null;
   let episodes = anime ? anime.episodes : kind === "episode" ? [...(libAny?.episodeNumbers ?? [])] : [];

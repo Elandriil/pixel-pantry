@@ -174,7 +174,11 @@ export class Scanner {
       const parsedJson = parsed ? JSON.stringify(parsed) : null;
       if (existing && existing.deleted_at === null && existing.size === e.size && existing.mtime === e.mtime) {
         // an unchanged file is not probed again, but a parser improvement still reaches it (its group may change)
-        if (existing.parsed !== parsedJson) repo.setFileParsed(existing.id, parsedJson);
+        if (existing.parsed !== parsedJson) {
+          repo.setFileParsed(existing.id, parsedJson);
+          // no longer an episode or movie (an extra): it must not stay attached to the item it played as
+          if (parsedJson === null && existing.item_id !== null) repo.setFileItem(existing.id, null);
+        }
         continue;
       }
       const id = repo.upsertFile({
@@ -191,6 +195,7 @@ export class Scanner {
         added_at: this.now(),
         deleted_at: null,
       });
+      if (parsedJson === null && existing?.item_id) repo.setFileItem(id, null);
       try {
         repo.setFileProbe(id, await this.deps.probe(e.absPath), null);
       } catch (err) {
