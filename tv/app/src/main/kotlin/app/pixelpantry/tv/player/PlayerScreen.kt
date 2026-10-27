@@ -42,6 +42,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import app.pixelpantry.tv.R
 import app.pixelpantry.tv.player.PlayerViewModel.UiState
@@ -306,6 +307,21 @@ private fun VideoSurface(exoPlayer: ExoPlayer?, subtitleInsetPx: Int) {
                 // Keys belong to Compose; the view must never take focus.
                 isFocusable = false
                 descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                subtitleView?.apply {
+                    // White text with a dark outline on a transparent background, like a TV's own captions:
+                    // the default style boxes every line in black. Embedded ASS styling is ignored (plain text).
+                    setApplyEmbeddedStyles(false)
+                    setStyle(
+                        CaptionStyleCompat(
+                            android.graphics.Color.WHITE,
+                            android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT,
+                            CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                            android.graphics.Color.BLACK,
+                            null,
+                        ),
+                    )
+                }
             }
         },
         update = { view ->

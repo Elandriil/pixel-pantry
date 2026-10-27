@@ -94,22 +94,43 @@ class SubtitlePlanTest {
         assertEquals("off", plan.subtitleChoice)
     }
 
-    @Test fun anUnknownStoredChoiceFallsBackToTheDefaultEmbeddedTrack() {
+    @Test fun anUnknownStoredChoiceFallsBackToEnglish() {
         val plan = SubtitlePlan.build(detail(), base, "sidecar:gone.srt", shiftMs = 0)
-        assertEquals(4, plan.selectedEmbeddedIndex)
+        assertEquals(3, plan.selectedEmbeddedIndex)
         assertNull(plan.selectedSidecarUri)
-        assertEquals("embedded:4", plan.subtitleChoice)
+        assertEquals("embedded:3", plan.subtitleChoice)
     }
 
-    @Test fun noChoiceFallsBackToTheDefaultEmbeddedTrack() {
-        assertEquals(4, SubtitlePlan.build(detail(), base, null, shiftMs = 0).selectedEmbeddedIndex)
+    @Test fun noChoiceMeansEnglishOnEmbeddedBeforeSidecar() {
+        assertEquals(3, SubtitlePlan.build(detail(), base, null, shiftMs = 0).selectedEmbeddedIndex)
+        val sidecarOnly = SubtitlePlan.build(detail(subtitles = listOf(embedded4, srt, vtt)), base, null, shiftMs = 0)
+        assertNull(sidecarOnly.selectedEmbeddedIndex)
+        assertEquals(srt.id, sidecarOnly.subtitleChoice)
     }
 
-    @Test fun noDefaultEmbeddedTrackMeansOff() {
-        val plan = SubtitlePlan.build(detail(subtitles = listOf(embedded3, srt)), base, null, shiftMs = 0)
+    @Test fun aPlainEnglishTrackBeatsSdhAndForcedOnes() {
+        val sdh = SubtitleTrack(id = "embedded:2", label = "English (SDH)", lang = "eng", format = "embedded", isDefault = true)
+        val forced = SubtitleTrack(id = "embedded:5", label = "English Forced", lang = "en", format = "embedded")
+        val plan = SubtitlePlan.build(detail(subtitles = listOf(sdh, embedded3, forced, embedded4)), base, null, shiftMs = 0)
+        assertEquals("embedded:3", plan.subtitleChoice)
+        // only special English tracks: still English, the file's default among them
+        assertEquals("embedded:2", SubtitlePlan.build(detail(subtitles = listOf(sdh, forced, embedded4)), base, null, shiftMs = 0).subtitleChoice)
+    }
+
+    @Test fun withoutEnglishTheFilesDefaultTrackPlays() {
+        assertEquals(4, SubtitlePlan.build(detail(subtitles = listOf(embedded4, vtt)), base, null, shiftMs = 0).selectedEmbeddedIndex)
+    }
+
+    @Test fun withoutEnglishOrADefaultTrackItIsOff() {
+        val german = SubtitleTrack(id = "embedded:4", label = "Deutsch", lang = "ger", format = "embedded")
+        val plan = SubtitlePlan.build(detail(subtitles = listOf(german, vtt)), base, null, shiftMs = 0)
         assertNull(plan.selectedEmbeddedIndex)
         assertNull(plan.selectedSidecarUri)
         assertEquals("off", plan.subtitleChoice)
+    }
+
+    @Test fun anExplicitOffStaysOffEvenWithEnglish() {
+        assertEquals("off", SubtitlePlan.build(detail(), base, "off", shiftMs = 0).subtitleChoice)
     }
 
     @Test fun assIsSsa() {

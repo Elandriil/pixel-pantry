@@ -53,14 +53,14 @@ object SubtitlePlan {
     }
 
     /**
-     * [choice]: a subtitle id or [OFF]; one that matches no track of [detail] (or null) falls back to the default
-     * embedded track, else off. [base] resolves a server path; [shiftMs] delays the chosen sidecar.
+     * [choice]: a subtitle id or [OFF]; one that matches no track of [detail] (or null) falls back to
+     * [preferredDefault], else off. [base] resolves a server path; [shiftMs] delays the chosen sidecar.
      */
     fun build(detail: ItemDetail, base: (String) -> String, choice: String?, shiftMs: Int): Plan {
         val chosen: SubtitleTrack? = when (choice) {
             OFF -> null
             else -> detail.subtitles.firstOrNull { it.id == choice && (it.isEmbedded || it.url != null) }
-                ?: detail.subtitles.firstOrNull { it.isEmbedded && it.isDefault }
+                ?: preferredDefault(detail)
         }
         val configs = detail.subtitles.filter { !it.isEmbedded && it.url != null }.map { t ->
             val selected = t.id == chosen?.id
@@ -82,6 +82,24 @@ object SubtitlePlan {
             storedAudioChoice = storedAudioChoice(detail),
         )
     }
+
+    /**
+     * What plays when nothing was chosen for the item: English subtitles when the file has them (the owner's
+     * language of interest; subtitles are on by default). An embedded English track beats a sidecar, and a plain
+     * one beats an SDH, forced or commentary track. Without English, the file's own default embedded track.
+     */
+    fun preferredDefault(detail: ItemDetail): SubtitleTrack? {
+        val usable = detail.subtitles.filter { it.isEmbedded || it.url != null }
+        val english = usable.filter { normalizeLanguage(it.lang) == "en" }
+        return english.firstOrNull { it.isEmbedded && !isSpecial(it.label) }
+            ?: english.firstOrNull { it.isEmbedded }
+            ?: english.firstOrNull { !isSpecial(it.label) }
+            ?: english.firstOrNull()
+            ?: usable.firstOrNull { it.isEmbedded && it.isDefault }
+    }
+
+    private val SPECIAL = Regex("""\b(sdh|forced|hearing|impaired|commentary|signs?)\b""", RegexOption.IGNORE_CASE)
+    private fun isSpecial(label: String): Boolean = SPECIAL.containsMatchIn(label)
 
     /** The stored audio choice when it names a track, else the default track, else the first. */
     private fun audioChoice(detail: ItemDetail): String? =

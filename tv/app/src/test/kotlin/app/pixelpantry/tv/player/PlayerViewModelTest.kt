@@ -1060,7 +1060,7 @@ class PlayerViewModelTest {
     private val sidecarEn = "sidecar:Severance%20S01E01.en.srt"
     private val downloaded = "sidecar:Severance%20S01E01.os.srt"
 
-    @Test fun loadConfiguresEverySidecarAndSelectsNoneWithoutAChoice() = playerTest {
+    @Test fun loadConfiguresEverySidecarAndSelectsTheEmbeddedEnglishTrackWithoutAChoice() = playerTest {
         itemBody = subtitledItem()
         val vm = vm()
         val s = vm.playing()
@@ -1070,10 +1070,11 @@ class PlayerViewModelTest {
         assertEquals("application/x-subrip", configs.single().mimeType)
         assertEquals(server.url("/api/items/4/subtitles/sidecar/Severance%20S01E01.en.srt").toString(), configs.single().uri)
         assertFalse(configs.single().selected)
-        assertEquals("off", s.subtitleChoice)
-        assertEquals("Off", s.subtitleLabel)
+        // English is on by default: the embedded English track, not the sidecar
+        assertEquals("embedded:3", s.subtitleChoice)
+        assertEquals("English", s.subtitleLabel)
         tracksArrive(sidecarEn)
-        assertEquals("text off once the tracks are known", listOf<Int?>(null), port.textSelections)
+        assertEquals("the embedded group once the tracks are known", listOf<Int?>(2), port.textSelections)
     }
 
     @Test fun aStoredSidecarChoiceIsRestoredOnLoad() = playerTest {
@@ -1304,7 +1305,7 @@ class PlayerViewModelTest {
         assertEquals("audio:2", vm.current().audioChoice)
         awaitRealTime { trackPosts.isNotEmpty() }
         assertEquals("audio:2", trackPosts.single()["audio"]!!.jsonPrimitive.content)
-        assertEquals("off", trackPosts.single()["subtitle"]!!.jsonPrimitive.content)
+        assertEquals("embedded:3", trackPosts.single()["subtitle"]!!.jsonPrimitive.content)
     }
 
     @Test fun withoutAStoredAudioChoiceThePlayersSelectionStands() = playerTest {
