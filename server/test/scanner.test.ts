@@ -655,6 +655,33 @@ test("a file re-classified as an extra is detached from the episode it played as
   expect(ctx.repo.filesForItem(realRow.item_id!).map((f) => f.rel_path)).toEqual([real]);
 });
 
+test("a show whose folder year is a season's year still matches: the search retries without the year filter", async () => {
+  const base = tmpDir();
+  const fake = fakeTmdb();
+  const calls: (number | null | undefined)[] = [];
+  const tmdb: TmdbLike = {
+    ...fake,
+    async searchTv(q, y) {
+      calls.push(y);
+      // TMDB's first_air_date_year=2009 excludes a show that first aired in 2007
+      return y === 2009 ? [] : [{ id: 1200, title: "Darker than Black", originalTitle: "Darker than Black", year: 2007, popularity: 30 }];
+    },
+    tvDetails: (id) => fake.tvDetails(id),
+    tvSeason: (id, s) => fake.tvSeason(id, s),
+    searchMovie: (q, y) => fake.searchMovie(q, y),
+    movieDetails: (id) => fake.movieDetails(id),
+  };
+  fake.tvDetailsById[1200] = tvDetails(1200, "Darker than Black", [[1, 26], [2, 12]]);
+  fake.seasonsByIdAndNumber["1200:2"] = season(2, [1, 2], 500);
+  touch(join(base, "anime", "DARKER Than BLACK (2009)", "DARKER Than BLACK - S02 E01 - Black Cats.mkv"), 10);
+  const ctx = setup({ libraries: [{ id: "anime", path: join(base, "anime"), category: "anime" }], tmdb });
+  await ctx.scanner.scan();
+  expect(calls).toEqual([2009, null]);
+  const shows = ctx.repo.listShows("anime");
+  expect(shows.map((s) => [s.title, s.tmdb_id])).toEqual([["Darker than Black", 1200]]);
+  expect(ctx.repo.listEpisodes(shows[0]!.id).map((e) => [e.season_number, e.episode_number])).toEqual([[2, 1]]);
+});
+
 test("no library folder found sets lastError and touches nothing", async () => {
   const root = join(tmpDir(), "nope");
   const ctx = setup({ root });

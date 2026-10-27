@@ -3,7 +3,7 @@ import type { Library } from "../config";
 import type { Logger } from "../log";
 import { absoluteToSeasonEpisode } from "../metadata/anime";
 import { pickMatch } from "../metadata/matcher";
-import type { TmdbClient, TmdbTvDetails } from "../metadata/tmdb";
+import type { TmdbClient, TmdbSearchResult, TmdbTvDetails } from "../metadata/tmdb";
 import { parseVideoPath, type ParsedVideo } from "./parse";
 import type { ProbeResult } from "./probe";
 import type { FileRow, ItemRow, Repo, ShowRow } from "./repo";
@@ -304,14 +304,28 @@ export class Scanner {
     return (o.item_type === "movie") === (kind === "movie") ? o.tmdb_id : null;
   }
 
+  /**
+   * TMDB's year parameter is a strict filter, and the year we parsed is often a season folder's (`Darker than
+   * Black (2009)` is season 2 of a 2007 show) or a release year: when it finds nothing, search again without it.
+   * pickMatch still sees the year, so a same-title remake is not taken blindly.
+   */
+  private async searchWithRetry(
+    search: (query: string, year: number | null) => Promise<TmdbSearchResult[]>,
+    title: string,
+    year: number | null,
+  ) {
+    let m = pickMatch(await search(title, year), title, year);
+    if (!m && year !== null) m = pickMatch(await search(title, null), title, year);
+    return m;
+  }
+
   private async matchShow(show: ShowRow): Promise<void> {
     const { repo, tmdb, log } = this.deps;
     try {
       let tmdbId = this.overrideId(show.parsed_key, "show");
       let matchNote: string | null = null;
       if (tmdbId === null) {
-        const results = await tmdb.searchTv(show.parsed_title, show.year);
-        const m = pickMatch(results, show.parsed_title, show.year);
+        const m = await this.searchWithRetry((q, y) => tmdb.searchTv(q, y), show.parsed_title, show.year);
         tmdbId = m?.result.id ?? null;
         if (m?.confidence === "low") matchNote = lowConfidence(m.result.title);
       }
@@ -469,8 +483,7 @@ export class Scanner {
       let tmdbId = this.overrideId(key, "movie");
       let matchNote: string | null = null;
       if (tmdbId === null) {
-        const results = await tmdb.searchMovie(item.parsed_title, item.year);
-        const m = pickMatch(results, item.parsed_title, item.year);
+        const m = await this.searchWithRetry((q, y) => tmdb.searchMovie(q, y), item.parsed_title, item.year);
         tmdbId = m?.result.id ?? null;
         if (m?.confidence === "low") matchNote = lowConfidence(m.result.title);
       }
