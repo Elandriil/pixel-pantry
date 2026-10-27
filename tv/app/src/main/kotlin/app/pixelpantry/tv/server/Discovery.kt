@@ -3,6 +3,7 @@ package app.pixelpantry.tv.server
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.util.Log
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -42,6 +43,7 @@ class NsdDiscovery(context: Context) : Discovery {
             try {
                 nsd.resolveService(service, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                        Log.w(TAG, "mDNS resolve failed for ${serviceInfo.serviceName}: $errorCode")
                         if (errorCode == NsdManager.FAILURE_ALREADY_ACTIVE && !retried) {
                             synchronized(lock) { if (!closed) pending.addLast(service to true) }
                         }
@@ -49,6 +51,7 @@ class NsdDiscovery(context: Context) : Discovery {
                     }
 
                     override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                        Log.i(TAG, "mDNS resolved ${serviceInfo.serviceName} -> ${hostString(serviceInfo)}:${serviceInfo.port}")
                         hostString(serviceInfo)?.let { trySend(Candidate(it, serviceInfo.port)) }
                         finish()
                     }
@@ -61,10 +64,14 @@ class NsdDiscovery(context: Context) : Discovery {
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {}
             override fun onDiscoveryStopped(serviceType: String) {}
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) { close() }
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                Log.w(TAG, "mDNS discovery failed to start: $errorCode")
+                close()
+            }
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {}
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                Log.i(TAG, "mDNS found ${serviceInfo.serviceName}")
                 synchronized(lock) { if (!closed) pending.addLast(serviceInfo to false) }
                 resolveNext()
             }
@@ -94,5 +101,6 @@ class NsdDiscovery(context: Context) : Discovery {
 
     private companion object {
         const val SERVICE_TYPE = "_pixelpantry._tcp."
+        const val TAG = "PixelPantry"
     }
 }

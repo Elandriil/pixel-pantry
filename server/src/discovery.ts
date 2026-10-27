@@ -1,11 +1,22 @@
 import { Bonjour } from "bonjour-service";
+import { hostname } from "node:os";
 import type { Logger } from "./log";
 
 export interface PublishOptions {
   name: string;
   type: string;
   port: number;
+  host: string;
   txt: Record<string, string>;
+}
+
+/**
+ * The SRV target and A-record name. bonjour-service uses the bare OS hostname (`DESKTOP-2CMEQHG` on Windows), which
+ * Android's NSD then tries to resolve as a DNS name and gives up; a `.local` name is answered over mDNS.
+ */
+export function mdnsHost(name: string = hostname()): string {
+  const base = name.trim().replace(/\.+$/, "");
+  return /\.local$/i.test(base) ? base : `${base}.local`;
 }
 
 /** The slice of `bonjour-service` used here, so tests can inject a fake. */
@@ -34,8 +45,9 @@ export function advertise(port: number, log: Logger, factory: (onError: (err: un
   let service: ReturnType<BonjourLike["publish"]> | null = null;
   try {
     bonjour = factory((err) => log.error("mDNS error", { error: message(err) }));
-    service = bonjour.publish({ name: "Pixel Pantry", type: "pixelpantry", port, txt: { version: "1" } });
-    log.info("mDNS advertising", { type: "pixelpantry", port });
+    const host = mdnsHost();
+    service = bonjour.publish({ name: "Pixel Pantry", type: "pixelpantry", port, host, txt: { version: "1" } });
+    log.info("mDNS advertising", { type: "pixelpantry", port, host });
   } catch (err) {
     log.error("mDNS advertise failed", { error: message(err) });
   }

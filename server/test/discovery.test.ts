@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { advertise, type BonjourLike } from "../src/discovery";
+import { mdnsHost, advertise, type BonjourLike } from "../src/discovery";
 import { Logger } from "../src/log";
 import { tmpDir } from "./helpers";
 
@@ -26,7 +26,8 @@ test("advertise publishes the pixelpantry service on the port and stop() unpubli
   const log = new Logger(join(tmpDir(), "server.log"));
   const fake = fakeBonjour();
   const ad = advertise(8765, log, fake.factory);
-  expect(fake.published).toEqual([{ name: "Pixel Pantry", type: "pixelpantry", port: 8765, txt: { version: "1" } }]);
+  expect(fake.published).toEqual([{ name: "Pixel Pantry", type: "pixelpantry", port: 8765, host: mdnsHost(), txt: { version: "1" } }]);
+  expect(mdnsHost()).toMatch(/\.local$/);
   await ad.stop();
   expect(fake.stopped()).toBe(1);
   expect(fake.destroyed()).toBe(1);
@@ -49,4 +50,11 @@ test("advertise passes an error handler that logs runtime mDNS errors instead of
   expect(handler).toBeFunction();
   expect(() => handler!(new Error("EADDRINUSE 5353"))).not.toThrow();
   expect(log.recent().some((l) => l.includes("ERROR mDNS error") && l.includes("EADDRINUSE 5353"))).toBe(true);
+});
+
+test("mdnsHost appends .local to a bare Windows hostname and leaves a .local one alone", () => {
+  expect(mdnsHost("DESKTOP-2CMEQHG")).toBe("DESKTOP-2CMEQHG.local");
+  expect(mdnsHost("DESKTOP-2CMEQHG.")).toBe("DESKTOP-2CMEQHG.local");
+  expect(mdnsHost("timos-mac.local")).toBe("timos-mac.local");
+  expect(mdnsHost("Timos-Mac.LOCAL")).toBe("Timos-Mac.LOCAL");
 });

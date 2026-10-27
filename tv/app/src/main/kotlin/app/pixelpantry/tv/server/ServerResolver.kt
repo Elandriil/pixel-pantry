@@ -49,15 +49,20 @@ class ServerResolver(
             return if (probe(url)) Result.Found(url, source) else null
         }
 
-        store.manualAddress.first()?.takeIf { it.isNotBlank() }?.let { manual ->
-            return remember(attempt(manual, Source.MANUAL)) ?: Result.NotFound(tried)
-        }
-        store.lastKnownAddress.first()?.let { last ->
-            remember(attempt(last, Source.LAST_KNOWN))?.let { return it }
+        // A manual address wins while it answers. When it stops answering (the PC got a new DHCP address),
+        // discovery still runs, so the owner is not stuck re-typing an address the server can announce itself.
+        val manual = store.manualAddress.first()?.takeIf { it.isNotBlank() }
+        if (manual != null) {
+            remember(attempt(manual, Source.MANUAL))?.let { return it }
+        } else {
+            store.lastKnownAddress.first()?.let { last ->
+                remember(attempt(last, Source.LAST_KNOWN))?.let { return it }
+            }
         }
 
         var found: Result.Found? = null
         val seen = mutableSetOf<String>()
+        manual?.let { seen += it }
         store.lastKnownAddress.first()?.let { seen += it }
         withTimeoutOrNull(MDNS_TIMEOUT_MS) {
             discovery.candidates(MDNS_TIMEOUT_MS).firstOrNull { c ->
@@ -71,7 +76,8 @@ class ServerResolver(
     }
 
     companion object {
-        const val MDNS_TIMEOUT_MS = 5_000L
+        /** Android's NSD takes a few seconds to start and resolve on some TVs; 5 s missed the Bravia's answer. */
+        const val MDNS_TIMEOUT_MS = 12_000L
 
         /**
          * Production probe: the candidate must answer /api/info as "Pixel Pantry". It asks the candidate directly

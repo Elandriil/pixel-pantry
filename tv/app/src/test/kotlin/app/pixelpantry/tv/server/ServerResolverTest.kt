@@ -39,15 +39,22 @@ class ServerResolverTest {
         assertEquals(ServerResolver.Result.Found("http://10.0.0.5:8765", ServerResolver.Source.MANUAL), r)
     }
 
-    @Test fun manualUnreachableIsNotFoundAndSkipsMdns() = runTest {
+    @Test fun manualUnreachableFallsBackToMdnsButNotToLastKnown() = runTest {
         store.setManualAddress("10.0.0.5:8765")
         store.setLastKnownAddress("10.0.0.9:8765")
-        val d = FakeDiscovery(listOf(Candidate("10.0.0.7", 8765)))
+        val d = FakeDiscovery(listOf(Candidate("10.0.0.5", 8765), Candidate("10.0.0.7", 8765)))
         val probed = mutableListOf<String>()
         val r = resolver(d, setOf("http://10.0.0.9:8765", "http://10.0.0.7:8765"), probed).resolve()
+        assertEquals(ServerResolver.Result.Found("http://10.0.0.7:8765", ServerResolver.Source.MDNS), r)
+        // the failed manual address is not probed twice when mDNS announces the same one
+        assertEquals(listOf("http://10.0.0.5:8765", "http://10.0.0.7:8765"), probed)
+        assertEquals("10.0.0.7:8765", store.lastKnownAddress.first())
+    }
+
+    @Test fun manualUnreachableAndNothingAnnouncedIsNotFound() = runTest {
+        store.setManualAddress("10.0.0.5:8765")
+        val r = resolver(FakeDiscovery(emptyList()), emptySet()).resolve()
         assertEquals(ServerResolver.Result.NotFound(listOf("http://10.0.0.5:8765")), r)
-        assertEquals(listOf("http://10.0.0.5:8765"), probed)
-        assertEquals(false, d.consulted)
     }
 
     @Test fun lastKnownReachableIsFound() = runTest {
