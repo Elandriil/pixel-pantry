@@ -16,6 +16,10 @@ printf '%s\r\n' \
   'Set sh = CreateObject("WScript.Shell")' \
   'Set fso = CreateObject("Scripting.FileSystemObject")' \
   'dir = fso.GetParentFolderName(WScript.ScriptFullName)' \
+  'If Not fso.FileExists(dir & "\PixelPantry.exe") Then' \
+  '  MsgBox "PixelPantry.exe was not found next to this script." & vbCrLf & vbCrLf & "If you opened this from inside the zip file, extract the whole zip first (right-click the zip, Extract All), then run Start Pixel Pantry.vbs from the extracted folder.", vbExclamation, "Pixel Pantry"' \
+  '  WScript.Quit 1' \
+  'End If' \
   'sh.CurrentDirectory = dir' \
   'sh.Run """" & dir & "\PixelPantry.exe""", 0, False' > "$OUT/Start Pixel Pantry.vbs"
 
