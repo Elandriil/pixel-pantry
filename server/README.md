@@ -34,6 +34,16 @@ Cross-compiles on any OS and writes `dist/win/PixelPantry.exe`, `dist/win/ffprob
 
 Note: `--windows-hide-console` is only available when building on Windows, so the cross-compiled exe shows a console window when started directly. `Start Pixel Pantry.vbs` launches it hidden; building on Windows itself with `--windows-hide-console` removes the console entirely.
 
+## Getting the build onto the Windows PC
+
+`dist/` is git-ignored (the exe alone is 116 MB, over GitHub's 100 MB file limit). `bun run publish:dist` builds, zips `dist/win` (about 60 MB) and force-pushes it as the only commit of the `dist` branch, so rebuilds never grow the repo. On the Windows PC:
+
+```
+git clone --branch dist --depth 1 https://github.com/Elandriil/pixel-pantry.git pixel-pantry-dist
+```
+
+then unzip `PixelPantry-win.zip`. To update later: `git pull` in that folder (the branch is rewritten, so use `git fetch origin dist && git reset --hard origin/dist` if pull complains), unzip again and replace `PixelPantry.exe` only.
+
 ## First run on Windows
 
 1. Double-click `Start Pixel Pantry.vbs` (hides the console window; double-clicking `PixelPantry.exe` directly also works but shows a console window). SmartScreen: "More info" then "Run anyway". From then on it starts with Windows by itself ("Start with Windows" in the admin settings, on by default: a `Pixel Pantry` value in `HKCU\...\Run` pointing at the .vbs, refreshed at every start, so moving the folder is fine).

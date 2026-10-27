@@ -19,6 +19,7 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "test": "bun test",
-    "package:win": "bash scripts/package-win.sh"
+    "package:win": "bash scripts/package-win.sh",
+    "publish:dist": "bash scripts/publish-dist.sh --build"
   }
 }
