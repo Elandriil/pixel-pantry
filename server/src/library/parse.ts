@@ -147,6 +147,12 @@ export function parseVideoPath(relPath: string, category: Category): ParsedVideo
   let year: number | null = libAny?.year ? Number(libAny.year) || null : null;
   if (year === null && titleFolder) year = folderYear(titleFolder);
 
+  // `Ape maga[1970] 01- ...`: a bracketed year the generic parser leaves in the title (it only reads `(1970)`)
+  const by = /^(.*\S)\s*[[(]((?:19|20)\d{2})[\])]$/.exec(title);
+  if (by) {
+    title = by[1]!;
+    year ??= Number(by[2]);
+  }
   // `Doctor Who 2005`: a trailing year that is the parsed year (or, for episodes, the only year) is not part of
   // the title, so `Doctor.Who.2005.S01E01` and `Doctor Who (2005)/...` group as one show. `Blade Runner 2049 (2017)` keeps it.
   const ty = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(title);

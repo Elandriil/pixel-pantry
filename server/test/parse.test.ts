@@ -26,6 +26,9 @@ const rows: [string, string, number | null, number | null, number[], boolean][] 
   ["anime/[Grp] Frieren Part 2 - 03 (1080p).mkv", "Frieren", null, 2, [3], false],
   ["anime/Frieren S2/Frieren S2 E03.mkv", "Frieren", null, 2, [3], false],
   ["anime/One Piece - 1100.mkv", "One Piece", null, null, [1100], true],
+  ["tv/Ape maga[1970] 01- L'ape magà comincia a volare.mp4", "Ape maga", 1970, null, [1], false],
+  ["tv/Ape maga[1970]/Ape maga[1970] 02- Vai,vai Ape magà.mp4", "Ape maga", 1970, null, [2], false],
+  ["tv/Lost [2004]/Lost S01E01.mkv", "Lost", 2004, 1, [1], false],
   ["anime/[SubsPlease] One Piece - 1100 (1080p) [ABCD].mkv", "One Piece", null, null, [1100], true],
 ];
 
