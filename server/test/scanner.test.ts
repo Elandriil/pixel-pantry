@@ -617,6 +617,24 @@ test("probe failure is stored and scan continues", async () => {
   expect(ctx.repo.getFileByPath(b)!.duration).toBe(1200);
 });
 
+test("a parser improvement re-groups an unchanged file at the next scan without probing it again", async () => {
+  const ctx = setup();
+  const rel = ctx.file("tv/Ape maga[1970] 01- L'ape maga comincia a volare.mp4");
+  await ctx.scanner.scan();
+  expect(ctx.repo.listShows("tv").map((s) => s.title)).toEqual(["Ape maga"]);
+  const file = ctx.repo.getFileByPath(rel)!;
+  // what an older parser stored: the bracketed year left in the title
+  const stale = { ...JSON.parse(file.parsed!), title: "Ape maga[1970]", year: null, parsedKey: "tv:ape maga1970:" };
+  ctx.repo.setFileParsed(file.id, JSON.stringify(stale));
+  const probes = ctx.probe.calls.length;
+
+  ctx.clock.t += 1000;
+  await ctx.scanner.scan();
+  expect(ctx.probe.calls.length).toBe(probes);
+  expect(JSON.parse(ctx.repo.getFileByPath(rel)!.parsed!).title).toBe("Ape maga");
+  expect(ctx.repo.listShows("tv").map((s) => s.title)).toEqual(["Ape maga"]);
+});
+
 test("no library folder found sets lastError and touches nothing", async () => {
   const root = join(tmpDir(), "nope");
   const ctx = setup({ root });

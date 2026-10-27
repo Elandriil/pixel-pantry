@@ -125,6 +125,7 @@ export class Repo {
       fileSetDeleted: p("UPDATE files SET deleted_at = ? WHERE id = ?"),
       fileSetItem: p("UPDATE files SET item_id = ? WHERE id = ?"),
       fileSetProbe: p("UPDATE files SET duration = ?, audio_tracks = ?, subtitle_tracks = ?, probe_error = ? WHERE id = ?"),
+      fileSetParsed: p("UPDATE files SET parsed = ? WHERE id = ?"),
       filesForItem: p("SELECT * FROM files WHERE item_id = ? ORDER BY id"),
 
       showByKey: p("SELECT * FROM shows WHERE parsed_key = ?"),
@@ -262,6 +263,11 @@ export class Repo {
 
   setFileItem(fileId: number, itemId: number | null): void {
     this.q.fileSetItem!.run(itemId, fileId);
+  }
+
+  /** Only the name analysis changed (a parser improvement): the probe data stays. */
+  setFileParsed(fileId: number, parsed: string | null): void {
+    this.q.fileSetParsed!.run(parsed, fileId);
   }
 
   setFileProbe(fileId: number, probe: ProbeInput | null, error: string | null): void {

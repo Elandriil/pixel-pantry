@@ -170,14 +170,19 @@ export class Scanner {
     this.st.phase = "probing";
     for (const e of entries) {
       const existing = repo.getFileByPath(e.relPath);
-      if (existing && existing.deleted_at === null && existing.size === e.size && existing.mtime === e.mtime) continue;
       const parsed = parseVideoPath(e.relPath, e.category);
+      const parsedJson = parsed ? JSON.stringify(parsed) : null;
+      if (existing && existing.deleted_at === null && existing.size === e.size && existing.mtime === e.mtime) {
+        // an unchanged file is not probed again, but a parser improvement still reaches it (its group may change)
+        if (existing.parsed !== parsedJson) repo.setFileParsed(existing.id, parsedJson);
+        continue;
+      }
       const id = repo.upsertFile({
         rel_path: e.relPath,
         category: e.category,
         size: e.size,
         mtime: e.mtime,
-        parsed: parsed ? JSON.stringify(parsed) : null,
+        parsed: parsedJson,
         item_id: null,
         duration: null,
         audio_tracks: null,
