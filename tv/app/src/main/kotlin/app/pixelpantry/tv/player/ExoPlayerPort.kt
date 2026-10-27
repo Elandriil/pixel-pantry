@@ -1,6 +1,7 @@
 package app.pixelpantry.tv.player
 
 import android.content.Context
+import android.util.Log
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -78,6 +79,11 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
             }
             val fatal = super.getRetryDelayMsFor(info) == C.TIME_UNSET
             val decision = budget.onError(info.loadEventInfo.bytesLoaded, SystemClock.elapsedRealtime())
+            Log.w(
+                TAG,
+                "Load error (${info.errorCount}, ${info.loadEventInfo.bytesLoaded} bytes, fatal=$fatal, $decision) for $uri",
+                info.exception,
+            )
             if (!fatal && decision is LoadErrorBudget.Decision.Retry) return decision.delayMs
             val message = describe(info.exception)
             main.postAtTime({ fail(message) }, failureToken, SystemClock.uptimeMillis())
@@ -123,7 +129,10 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
             override fun onPlaybackStateChanged(playbackState: Int) =
                 listeners.forEach { it.onPlaybackStateChanged(playbackState) }
 
-            override fun onPlayerError(error: PlaybackException) = fail(describe(error))
+            override fun onPlayerError(error: PlaybackException) {
+                Log.e(TAG, "Player error ${error.errorCodeName}", error)
+                fail(describe(error))
+            }
 
             override fun onTracksChanged(tracks: Tracks) = listeners.forEach { it.onTracksChanged() }
 
@@ -282,3 +291,5 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
         const val GIVE_UP_AFTER_MS = 8_000L
     }
 }
+
+private const val TAG = "PixelPantry"

@@ -1,5 +1,7 @@
 import { Hono } from "hono";
+import { createReadStream } from "node:fs";
 import { extname } from "node:path";
+import { Readable } from "node:stream";
 import type { ImageSize } from "../../metadata/images";
 import type { Deps } from "../deps";
 import { HttpError } from "../errors";
@@ -54,9 +56,15 @@ export function streamRoutes(deps: Deps): Hono {
     const file = liveFiles(deps.repo.filesForItem(id))[0];
     if (!file) throw new HttpError(404, "Item has no file");
 
-    const bun = Bun.file(filePath(deps, file));
+    const path = filePath(deps, file);
+    const bun = Bun.file(path);
     if (!(await bun.exists())) throw new HttpError(404, "File missing on disk");
     const size = bun.size;
+    // A Node read stream sends the first chunk at once. `Bun.file(...).slice()` as a body reads the whole slice
+    // into memory first (on Windows at least): an open-ended `bytes=0-` of a 900 MB file stalled every request
+    // for 30 s and the TV app gave up. 1 MB chunks keep the loop free and the socket fed.
+    const body = (start: number, end: number) =>
+      Readable.toWeb(createReadStream(path, { start, end, highWaterMark: 1 << 20 })) as unknown as ReadableStream;
 
     const headers: Record<string, string> = {
       "Accept-Ranges": "bytes",
@@ -72,10 +80,10 @@ export function streamRoutes(deps: Deps): Hono {
     if (range) {
       headers["Content-Range"] = `bytes ${range.start}-${range.end}/${size}`;
       headers["Content-Length"] = String(range.end - range.start + 1);
-      return new Response(head ? null : bun.slice(range.start, range.end + 1), { status: 206, headers });
+      return new Response(head ? null : body(range.start, range.end), { status: 206, headers });
     }
     headers["Content-Length"] = String(size);
-    return new Response(head ? null : bun, { status: 200, headers });
+    return new Response(head || size === 0 ? null : body(0, size - 1), { status: 200, headers });
   });
 
   r.get("/images/:size/:name", async (c) => {
