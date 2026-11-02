@@ -10,7 +10,8 @@ mkdir -p "$OUT"
 bun build --compile --target=bun-windows-x64 --minify \
   ./src/index.ts --outfile "$OUT/PixelPantry.exe"
 
-cp node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe "$OUT/ffprobe.exe"
+# A current ffprobe (ffprobe-static bundles FFmpeg 4.4 from 2021; ffprobe reads untrusted media files).
+bash scripts/fetch-ffprobe-win.sh "$OUT/ffprobe.exe"
 cp scripts/README.win.txt "$OUT/README.txt"
 printf '%s\r\n' \
   'Set sh = CreateObject("WScript.Shell")' \
