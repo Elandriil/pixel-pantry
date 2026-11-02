@@ -197,4 +197,65 @@ class ApiClientTest {
         client.history()
         assertEquals("/api/history?limit=200", server.takeRequest().path)
     }
+
+    // Pairing (the server needs the paired TV's token on every /api call but /api/info and /api/pair)
+
+    @Test fun theTokenGoesOutAsBearerOnEveryCallToTheServer() = runTest {
+        client.token = "tok"
+        reply("""{"category":"home","rows":[]}"""); reply("{}"); reply("WEBVTT")
+        client.home()
+        assertEquals("Bearer tok", server.takeRequest().getHeader("Authorization"))
+        client.setWatched(1, true)
+        assertEquals("Bearer tok", server.takeRequest().getHeader("Authorization"))
+        client.text("/api/items/1/subtitles/sidecar/a.vtt")
+        assertEquals("Bearer tok", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test fun withoutATokenNoAuthorizationHeaderIsSent() = runTest {
+        reply("""{"category":"home","rows":[]}""")
+        client.home()
+        assertNull(server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test fun infoOnACandidateNeverCarriesTheToken() = runTest {
+        client.token = "tok"
+        val candidate = MockWebServer().also { it.start() }
+        try {
+            candidate.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"name":"Pixel Pantry","version":"1","serverId":"abc"}"""))
+            val info = client.info(candidate.url("/").toString().trimEnd('/'))
+            assertEquals("abc", info.serverId)
+            assertNull(candidate.takeRequest().getHeader("Authorization"))
+        } finally {
+            candidate.shutdown()
+        }
+    }
+
+    @Test fun pairPostsThePinWithoutATokenAndReturnsTheServersToken() = runTest {
+        client.token = "old"
+        val candidate = MockWebServer().also { it.start() }
+        try {
+            candidate.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"token":"new","serverId":"abc"}"""))
+            val r = client.pair(candidate.url("/").toString().trimEnd('/'), "123456")
+            assertEquals(PairResponse("new", "abc"), r)
+            val req = candidate.takeRequest()
+            assertEquals("POST", req.method)
+            assertEquals("/api/pair", req.path)
+            assertNull(req.getHeader("Authorization"))
+            assertEquals("""{"pin":"123456"}""", req.body.readUtf8())
+            assertEquals("pairing does not switch servers by itself", "old", client.token)
+        } finally {
+            candidate.shutdown()
+        }
+    }
+
+    @Test fun aWrongPinSurfacesAsA403WithTheServersMessage() = runTest {
+        reply("""{"error":"Wrong PIN"}""", 403)
+        try {
+            client.pair(client.baseUrl, "000000")
+            fail("expected ApiException")
+        } catch (e: ApiException) {
+            assertEquals(403, e.status)
+            assertEquals("Wrong PIN", e.message)
+        }
+    }
 }

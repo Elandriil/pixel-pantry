@@ -172,8 +172,13 @@ data class OsResult(
 @Serializable
 data class SubtitleSearchResponse(val results: List<OsResult>)
 
+/** [serverId] identifies the installation; servers from before pairing existed do not send it. */
 @Serializable
-data class InfoResponse(val name: String, val version: String)
+data class InfoResponse(val name: String, val version: String, val serverId: String? = null)
+
+/** `POST /api/pair` with the right PIN: the token to send from now on, and whose it is. */
+@Serializable
+data class PairResponse(val token: String, val serverId: String)
 
 @Serializable
 data class Settings(

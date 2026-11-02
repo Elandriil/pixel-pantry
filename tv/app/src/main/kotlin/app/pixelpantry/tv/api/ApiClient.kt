@@ -23,6 +23,9 @@ import java.util.concurrent.TimeUnit
 class ApiClient(private val http: OkHttpClient, private val json: Json) {
     @Volatile var baseUrl: String = ""
 
+    /** The paired TV's token, sent as `Authorization: Bearer` on every call to [baseUrl]; null before pairing. */
+    @Volatile var token: String? = null
+
     /** Turns a server-relative path (e.g. "/img/p.jpg") into an absolute URL; absolute URLs pass through. */
     fun resolve(relative: String): String =
         if (relative.startsWith("http")) relative else baseUrl.trimEnd('/') + relative
@@ -34,7 +37,11 @@ class ApiClient(private val http: OkHttpClient, private val json: Json) {
      * redirects requests made meanwhile (or after a cancelled probe) away from the current one.
      */
     suspend fun info(candidate: String): InfoResponse =
-        execute("GET", "/api/info", null, emptyList(), InfoResponse.serializer(), candidate)
+        execute("GET", "/api/info", null, emptyList(), InfoResponse.serializer(), candidate, authorize = false)
+
+    /** Pairs with the server at [candidate] (not necessarily [baseUrl]): the PIN from its admin page for a token. */
+    suspend fun pair(candidate: String, pin: String): PairResponse =
+        execute("POST", "/api/pair", body { put("pin", pin) }, emptyList(), PairResponse.serializer(), candidate, authorize = false)
     suspend fun home(): CategoryPage = get("/api/home")
     suspend fun category(c: String): CategoryPage = get("/api/categories/$c")
     suspend fun show(id: Int): ShowDetail = get("/api/shows/$id")
@@ -69,7 +76,7 @@ class ApiClient(private val http: OkHttpClient, private val json: Json) {
     /** The body of [url] (absolute, or a server path) as text, e.g. a sidecar subtitle file. */
     suspend fun text(url: String): String = withContext(Dispatchers.IO) {
         val request = try {
-            Request.Builder().url(resolve(url)).build()
+            Request.Builder().url(resolve(url)).authorized().build()
         } catch (e: IllegalArgumentException) {
             throw ApiException(0, "Cannot reach $baseUrl")
         }
@@ -125,6 +132,8 @@ class ApiClient(private val http: OkHttpClient, private val json: Json) {
         query: List<Pair<String, String>>,
         serializer: KSerializer<T>,
         base: String,
+        /** false for the public routes probed on candidates: the token goes to [baseUrl] only. */
+        authorize: Boolean = true,
     ): T = withContext(Dispatchers.IO) {
         val url = try {
             (base.trimEnd('/') + path).toHttpUrl().newBuilder().apply {
@@ -133,7 +142,8 @@ class ApiClient(private val http: OkHttpClient, private val json: Json) {
         } catch (e: IllegalArgumentException) {
             throw ApiException(0, "Cannot reach $base")
         }
-        val request = Request.Builder().url(url).method(method, body ?: if (method == "GET") null else EMPTY_BODY).build()
+        val request = Request.Builder().url(url).method(method, body ?: if (method == "GET") null else EMPTY_BODY)
+            .let { if (authorize) it.authorized() else it }.build()
         try {
             http.newCall(request).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
@@ -147,6 +157,8 @@ class ApiClient(private val http: OkHttpClient, private val json: Json) {
             throw ApiException(-1, "Unexpected response from $base")
         }
     }
+
+    private fun Request.Builder.authorized(): Request.Builder = token?.let { header("Authorization", "Bearer $it") } ?: this
 
     private fun errorMessage(text: String, reason: String, code: Int): String {
         val fromBody = runCatching {

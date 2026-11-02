@@ -44,3 +44,19 @@ class ServerStoreTest {
         assertNull(store.manualAddress.first())
     }
 }
+
+class ServerStorePairingTest {
+    private val dir: java.io.File = Files.createTempDirectory("pantry-store-pairing").toFile()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val store = ServerStore(PreferenceDataStoreFactory.create(scope = scope) { File(dir, "pantry.preferences_pb") })
+
+    @After fun tearDown() { scope.cancel(); dir.deleteRecursively() }
+
+    @Test fun pairingRoundTripsAndClears() = runTest {
+        assertNull(store.pairing.first())
+        store.setPairing(Pairing(token = "tok", serverId = "srv"))
+        assertEquals(Pairing("tok", "srv"), store.pairing.first())
+        store.clearPairing()
+        assertNull(store.pairing.first())
+    }
+}

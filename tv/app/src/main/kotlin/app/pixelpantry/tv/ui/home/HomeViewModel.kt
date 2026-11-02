@@ -9,7 +9,8 @@ import app.pixelpantry.tv.api.Card
 import app.pixelpantry.tv.api.Row
 import app.pixelpantry.tv.library.LibraryScanner
 import app.pixelpantry.tv.ui.components.Toaster
-import app.pixelpantry.tv.ui.components.isUnreachable
+import app.pixelpantry.tv.ui.components.blocksPage
+import app.pixelpantry.tv.ui.components.isUnauthorized
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,7 +44,7 @@ class HomeViewModel(
         data object Loading : UiState
         data class Error(val message: String) : UiState
         /** The first load got no answer from [baseUrl]. */
-        data class Unreachable(val baseUrl: String) : UiState
+        data class Unreachable(val baseUrl: String, val pairingRequired: Boolean = false) : UiState
         /** [rows] holds only non-empty rows; an empty list means an empty library. [focused] feeds the hero. */
         data class Loaded(val rows: List<Row>, val focused: Card?) : UiState
     }
@@ -221,7 +222,7 @@ class HomeViewModel(
     } catch (e: ApiException) {
         when {
             _state.value is UiState.Loaded -> toaster.show(couldNotRefresh)
-            e.isUnreachable() -> _state.value = UiState.Unreachable(api.baseUrl)
+            e.blocksPage() -> _state.value = UiState.Unreachable(api.baseUrl, pairingRequired = e.isUnauthorized())
             else -> _state.value = UiState.Error(e.message.orEmpty())
         }
         false

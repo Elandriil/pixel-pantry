@@ -69,7 +69,7 @@ fun HistoryScreen(vm: HistoryViewModel, onNavigate: (NavEvent) -> Unit, onChange
             detail = s.message,
             primary = ButtonSpec(stringResource(R.string.home_retry), vm::load),
         )
-        is UiState.Unreachable -> UnreachableScreen(s.baseUrl, onRetry = vm::retry, onChangeServer = onChangeServer)
+        is UiState.Unreachable -> UnreachableScreen(s.baseUrl, s.pairingRequired, onRetry = vm::retry, onChangeServer = onChangeServer)
         is UiState.Loaded -> Loaded(s, vm::open)
     }
 }

@@ -32,6 +32,8 @@ bun run package:win
 
 Cross-compiles on any OS and writes `dist/win/PixelPantry.exe`, `dist/win/ffprobe.exe`, `dist/win/Start Pixel Pantry.vbs` and `dist/win/README.txt` (source: `scripts/README.win.txt`). Copy the `dist/win` folder to the Windows PC. The script fails if any of the four files is missing.
 
+`ffprobe.exe` is downloaded by `scripts/fetch-ffprobe-win.sh` from BtbN's FFmpeg builds (current 9.0 static LGPL build, cached in `dist/cache/`) rather than taken from `ffprobe-static`, whose bundled FFmpeg 4.4 dates from 2021: ffprobe parses every file that lands in the library, so it should be a maintained build. Rebuild (or rerun the script) now and then to pick up FFmpeg fixes.
+
 Note: `--windows-hide-console` is only available when building on Windows, so the cross-compiled exe shows a console window when started directly. `Start Pixel Pantry.vbs` launches it hidden; building on Windows itself with `--windows-hide-console` removes the console entirely.
 
 ## Getting the build onto the Windows PC
@@ -51,7 +53,14 @@ then unzip `PixelPantry-win.zip`. To update later: `git pull` in that folder (th
 3. Open `http://localhost:8765/admin`.
 4. Add the library folders (each with its type: TV shows, Anime or Movies; e.g. `D:\Media\tv`, `D:\Media\movies`, `D:\October movies`) and a TMDB key (free account at themoviedb.org, Settings, API; paste the "API Read Access Token" or v3 key).
 5. Optional: OpenSubtitles account (opensubtitles.com, API consumer key plus username and password).
-6. Click "Rescan now". The TV app finds the server automatically.
+6. Click "Rescan now". The TV app finds the server automatically and asks once for the **TV pairing PIN** shown in the Status section; "Reset pairing" gives a new PIN and disconnects every TV.
+
+## Security model
+
+- The admin page (`/`, `/admin/*`) answers loopback connections only, and only with a `localhost` / `127.0.0.1` Host header (no DNS rebinding).
+- The media API (`/api/*`) listens on all interfaces for the TV, but every route except `GET /api/info` and `POST /api/pair` needs the paired TV's token (`Authorization: Bearer`), and every request must name the server by IP, `.local` name or localhost. A web page visited on the LAN therefore cannot read or change anything: it cannot add the header without a CORS preflight (never granted), and a rebinding domain fails the Host check.
+- Pairing: the TV sends the 6-digit PIN from the admin page once and gets a token tied to this server's `serverId`; five wrong PINs lock pairing for a minute. The secrets live in `data/config.json`, so protect that folder like any other file of your Windows account.
+- Not covered: traffic is plain HTTP on the LAN, and whoever has the PIN or physical access to a paired TV has the same access as the TV.
 
 Update by replacing the exe only; `data\` stays.
 

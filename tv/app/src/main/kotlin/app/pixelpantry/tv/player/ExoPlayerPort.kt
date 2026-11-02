@@ -60,7 +60,12 @@ class PlaybackErrorTexts(
  * extraction.
  */
 @OptIn(UnstableApi::class)
-class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : PlayerPort {
+class ExoPlayerPort(
+    context: Context,
+    private val texts: PlaybackErrorTexts,
+    /** The HTTP source for the stream and sidecars; the app passes one that carries the pairing token. */
+    httpFactory: DataSource.Factory = DefaultHttpDataSource.Factory().setConnectTimeoutMs(5_000).setReadTimeoutMs(10_000),
+) : PlayerPort {
     private val listeners = CopyOnWriteArrayList<PlayerListener>()
     private val main = Handler(Looper.getMainLooper())
     private var failed = false
@@ -92,10 +97,7 @@ class ExoPlayerPort(context: Context, private val texts: PlaybackErrorTexts) : P
     }
 
     override val exoPlayer: ExoPlayer = run {
-        val http = DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(5_000)
-            .setReadTimeoutMs(10_000)
-        val data = DefaultDataSource.Factory(context, http)
+        val data = DefaultDataSource.Factory(context, httpFactory)
         val sources = SidecarTolerantSourceFactory(DefaultMediaSourceFactory(data), data)
             .setLoadErrorHandlingPolicy(loadErrorPolicy)
         val renderers = object : DefaultRenderersFactory(context) {

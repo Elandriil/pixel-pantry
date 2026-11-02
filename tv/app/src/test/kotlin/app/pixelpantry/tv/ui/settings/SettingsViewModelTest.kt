@@ -4,6 +4,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.viewModelScope
 import app.pixelpantry.tv.api.ApiClient
 import app.pixelpantry.tv.api.Settings
+import app.pixelpantry.tv.server.Pairing
 import app.pixelpantry.tv.server.ServerLocator
 import app.pixelpantry.tv.server.ServerResolver
 import app.pixelpantry.tv.server.ServerStore
@@ -21,6 +22,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -59,6 +61,8 @@ class SettingsViewModelTest {
     private val infoCalls = ConcurrentLinkedQueue<String>()
     @Volatile private var current = Settings(skipBackSeconds = 115, skipForwardSeconds = 5, autoplayNext = true)
     @Volatile private var failPut = false
+    /** What the mock server calls itself in /api/info; the TV is paired with "srv" unless a test says otherwise. */
+    @Volatile private var serverId = "srv"
 
     private val strings = SettingsViewModel.Strings(
         connected = { "Connected to $it" },
@@ -96,7 +100,7 @@ class SettingsViewModelTest {
                         json(encode(current))
                     }
                 }
-                "GET /api/info" -> { infoCalls += request.requestUrl.toString(); json("""{"name":"Pixel Pantry","version":"1"}""") }
+                "GET /api/info" -> { infoCalls += request.requestUrl.toString(); json("""{"name":"Pixel Pantry","version":"1","serverId":"$serverId"}""") }
                 else -> MockResponse().setResponseCode(404)
             }
         }
@@ -128,8 +132,9 @@ class SettingsViewModelTest {
         withTimeout(5_000) { while (!condition()) delay(10) }
     }
 
-    /** A view model talking to the mock server, with the server's settings loaded. */
+    /** A view model talking to the mock server (paired with it), with the server's settings loaded. */
     private suspend fun vm(locator: ServerLocator = FakeLocator()): SettingsViewModel {
+        store.setPairing(Pairing("tok", "srv"))
         api.baseUrl = serverUrl
         val vm = SettingsViewModel(repo, store, locator, api, toaster, strings, version = "0.1.0").also { vms += it }
         awaitRealTime { vm.settings.value == current }
@@ -241,7 +246,7 @@ class SettingsViewModelTest {
 
     @Test fun automaticDiscoveryClearsTheManualAddressAndReResolves() = runTest {
         store.setManualAddress("10.0.0.9:8765")
-        val locator = FakeLocator(ServerResolver.Result.Found(serverUrl, ServerResolver.Source.MDNS))
+        val locator = FakeLocator(ServerResolver.Result.Found(serverUrl, ServerResolver.Source.MDNS, "srv"))
         val vm = vm(locator)
         awaitRealTime { vm.manualAddress.value == "10.0.0.9:8765" }
         api.baseUrl = "http://10.0.0.9:8765"
@@ -279,6 +284,34 @@ class SettingsViewModelTest {
         assertEquals(serverUrl, vm.serverAddress.value)
     }
 
+    @Test fun aTypedAddressOfAnUnpairedServerHandsOverToPairing() = runTest {
+        val vm = vm()
+        val events = ConcurrentLinkedQueue<SettingsViewModel.NavEvent>()
+        val collecting = scope.launch { vm.navEvents.collect { events += it } }
+        serverId = "another-pc"
+        api.baseUrl = "http://10.0.0.5:8765"
+        vm.setManualAddress(serverAddress)
+        awaitRealTime { events.isNotEmpty() }
+        assertEquals(listOf<SettingsViewModel.NavEvent>(SettingsViewModel.NavEvent.PairWith(serverAddress)), events.toList())
+        assertEquals("not switched before the PIN is entered", "http://10.0.0.5:8765", api.baseUrl)
+        assertNull("no toast either", toaster.current.value)
+        assertFalse(vm.editingAddress.value)
+        collecting.cancel()
+    }
+
+    @Test fun automaticDiscoveryFindingAnUnpairedServerHandsOverToPairing() = runTest {
+        // Only a server from before pairing existed (no id) can come back from discovery without matching the pairing.
+        val locator = FakeLocator(ServerResolver.Result.Found("http://10.0.0.7:8765", ServerResolver.Source.MDNS, null))
+        val vm = vm(locator)
+        val events = ConcurrentLinkedQueue<SettingsViewModel.NavEvent>()
+        val collecting = scope.launch { vm.navEvents.collect { events += it } }
+        vm.useAutomaticDiscovery()
+        awaitRealTime { events.isNotEmpty() }
+        assertEquals(listOf<SettingsViewModel.NavEvent>(SettingsViewModel.NavEvent.PairWith("10.0.0.7:8765")), events.toList())
+        assertEquals(serverUrl, api.baseUrl)
+        collecting.cancel()
+    }
+
     /** A second server that answers /api/info after [delayMs], with [code] (200 = a valid Pixel Pantry reply). */
     private fun slowServer(code: Int, delayMs: Long = 500): MockWebServer = MockWebServer().also { slow ->
         slow.dispatcher = object : Dispatcher() {
@@ -304,7 +337,7 @@ class SettingsViewModelTest {
         val results = withContext(Dispatchers.Default) {
             listOf(async { probe("http://$slowAddress") }, async { probe("http://$slowAddress") }).awaitAll()
         }
-        assertEquals(listOf(false, false), results)
+        assertEquals(listOf(null, null), results)
         assertEquals(serverUrl, api.baseUrl)
 
         // In Settings: while one probe runs, further address actions are ignored and other requests still go

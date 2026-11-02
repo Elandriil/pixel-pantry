@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.pixelpantry.tv.api.ApiClient
 import app.pixelpantry.tv.api.ApiException
+import app.pixelpantry.tv.api.InfoResponse
 import app.pixelpantry.tv.api.Settings
 import app.pixelpantry.tv.api.SettingsPatch
 import app.pixelpantry.tv.server.ServerAddress
@@ -19,12 +20,16 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -40,8 +45,10 @@ import java.io.IOException
  * server's value. Autoplay saves on each toggle. Every save sends only the changed key.
  *
  * The server address can be typed (`host:port`, probed before use) or handed back to automatic discovery.
- * Probes never touch [ApiClient.baseUrl]; it switches only after a probe succeeds and was not cancelled. While
- * one address operation runs ([connecting]) new ones are ignored; cancelling the editor cancels it.
+ * Probes never touch [ApiClient.baseUrl]; it switches only after a probe succeeds and was not cancelled. A
+ * server this TV is not paired with is not switched to: [NavEvent.PairWith] hands it to the connect screen, which
+ * asks for its PIN. While one address operation runs ([connecting]) new ones are ignored; cancelling the editor
+ * cancels it.
  */
 class SettingsViewModel(
     private val settingsRepo: SettingsRepo,
@@ -51,8 +58,16 @@ class SettingsViewModel(
     private val toaster: Toaster,
     private val strings: Strings,
     val version: String,
-    private val probe: suspend (baseUrl: String) -> Boolean = ServerResolver.apiProbe(api),
+    private val probe: suspend (baseUrl: String) -> InfoResponse? = ServerResolver.apiProbe(api),
 ) : ViewModel() {
+
+    sealed interface NavEvent {
+        /** The server at `host:port` answered but is not the paired one: open the connect screen to pair with it. */
+        data class PairWith(val address: String) : NavEvent
+    }
+
+    private val _navEvents = MutableSharedFlow<NavEvent>(extraBufferCapacity = 4)
+    val navEvents: SharedFlow<NavEvent> = _navEvents.asSharedFlow()
 
     data class Strings(
         val connected: (address: String) -> String,
@@ -154,16 +169,16 @@ class SettingsViewModel(
         }
         val url = "http://$trimmed"
         runAddressJob {
-            val ok = probe(url)
+            val info = probe(url)
             ensureActive() // cancelled meanwhile: never switch
-            if (!ok) {
+            if (info == null) {
                 toaster.show(strings.unreachable(trimmed))
                 return@runAddressJob
             }
             // Storing is best-effort: a storage error must not undo a working connection.
             try { store.setManualAddress(trimmed) } catch (e: IOException) { }
-            switchTo(url)
             _editingAddress.value = false
+            if (isPaired(info.serverId)) switchTo(url) else _navEvents.tryEmit(NavEvent.PairWith(trimmed))
         }
     }
 
@@ -180,7 +195,8 @@ class SettingsViewModel(
             val r = resolver.resolveOrNotFound()
             ensureActive()
             when (r) {
-                is ServerResolver.Result.Found -> switchTo(r.baseUrl)
+                is ServerResolver.Result.Found ->
+                    if (isPaired(r.serverId)) switchTo(r.baseUrl) else _navEvents.tryEmit(NavEvent.PairWith(r.baseUrl.removePrefix("http://")))
                 is ServerResolver.Result.NotFound -> {
                     try { store.setManualAddress(previousManual) } catch (e: IOException) { }
                     toaster.show(strings.noServerFound)
@@ -196,6 +212,12 @@ class SettingsViewModel(
         addressJob = job
         job.invokeOnCompletion { if (addressJob === job) _connecting.value = false }
         job.start()
+    }
+
+    /** Whether the stored pairing is with the server that calls itself [serverId]. */
+    private suspend fun isPaired(serverId: String?): Boolean {
+        val pairing = try { store.pairing.first() } catch (e: IOException) { null }
+        return pairing != null && serverId != null && pairing.serverId == serverId
     }
 
     private suspend fun switchTo(url: String) {

@@ -3,6 +3,11 @@
 Kotlin + Compose for TV client for the Pixel Pantry server (`../server`).
 Package / application id: `app.pixelpantry.tv`.
 
+On first connection the app asks for the 6-digit pairing PIN shown on the server's admin page; the token it
+receives is stored (DataStore) together with the server's id and sent as `Authorization: Bearer` on every
+request, including images and the video stream (an OkHttp interceptor). Only the paired server is adopted
+automatically; a typed address of another server leads to its PIN screen.
+
 ## Environment
 
 ```sh

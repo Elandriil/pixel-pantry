@@ -2,6 +2,7 @@ package app.pixelpantry.tv.di
 
 import android.app.Application
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import app.pixelpantry.tv.server.Pairing
 import app.pixelpantry.tv.server.ServerStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -10,6 +11,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
@@ -40,5 +42,18 @@ class AppContainerTest {
 
     @Test fun startsBlankWithoutAStoredAddress() {
         assertEquals("", container().api.baseUrl)
+    }
+
+    @Test fun startsWithTheStoredPairingToken() {
+        runBlocking {
+            store.setLastKnownAddress("192.168.1.20:8765")
+            store.setPairing(Pairing("tok", "srv"))
+        }
+        assertEquals("tok", container().api.token)
+    }
+
+    @Test fun startsWithoutATokenWhenNotPaired() {
+        runBlocking { store.setLastKnownAddress("192.168.1.20:8765") }
+        assertNull(container().api.token)
     }
 }

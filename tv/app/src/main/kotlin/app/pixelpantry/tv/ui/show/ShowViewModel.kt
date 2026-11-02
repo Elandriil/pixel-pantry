@@ -9,7 +9,8 @@ import app.pixelpantry.tv.api.ItemSummary
 import app.pixelpantry.tv.api.SeasonDetail
 import app.pixelpantry.tv.api.ShowSummary
 import app.pixelpantry.tv.ui.components.Toaster
-import app.pixelpantry.tv.ui.components.isUnreachable
+import app.pixelpantry.tv.ui.components.blocksPage
+import app.pixelpantry.tv.ui.components.isUnauthorized
 import app.pixelpantry.tv.util.formatRemaining
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -56,7 +57,7 @@ class ShowViewModel(
         data object Loading : UiState
         data class Error(val message: String) : UiState
         /** The first load got no answer from [baseUrl]. */
-        data class Unreachable(val baseUrl: String) : UiState
+        data class Unreachable(val baseUrl: String, val pairingRequired: Boolean = false) : UiState
 
         /**
          * Exactly one of [show] / [movie] is set. [seasons] is empty for a movie; regular seasons come in order
@@ -134,7 +135,7 @@ class ShowViewModel(
         } catch (e: ApiException) {
             when {
                 _state.value is UiState.Loaded -> toaster.show(strings.couldNotRefresh)
-                e.isUnreachable() -> _state.value = UiState.Unreachable(api.baseUrl)
+                e.blocksPage() -> _state.value = UiState.Unreachable(api.baseUrl, pairingRequired = e.isUnauthorized())
                 else -> _state.value = UiState.Error(e.message.orEmpty())
             }
         }

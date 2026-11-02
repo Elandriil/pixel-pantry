@@ -41,8 +41,11 @@ import app.pixelpantry.tv.ui.show.ShowScreen
 import app.pixelpantry.tv.ui.show.ShowViewModel
 
 object Routes {
-    /** `change=true`: opened from an Unreachable screen's "Change server" (the form, prefilled). */
-    const val CONNECT = "connect?change={change}"
+    /**
+     * `change=true`: opened from an Unreachable screen's "Change server" (the form, prefilled).
+     * `pair=host:port`: opened from Settings to pair with that server (straight to its PIN).
+     */
+    const val CONNECT = "connect?change={change}&pair={pair}"
     const val HOME = "home/{category}"
     const val SHOW = "show/{id}"
     const val MOVIE = "movie/{id}"
@@ -55,6 +58,7 @@ object Routes {
     val CATEGORIES = listOf("home", "tv", "anime", "movies")
 
     fun connect(changeServer: Boolean = false) = "connect?change=$changeServer"
+    fun pair(address: String) = "connect?change=true&pair=${android.net.Uri.encode(address)}"
     fun home(category: String) = "home/$category"
     fun show(id: Int) = "show/$id"
     fun movie(id: Int) = "movie/$id"
@@ -109,6 +113,9 @@ fun NavGraph(container: AppContainer) {
     /** An Unreachable screen's "Change server": the connect form over the current page (BACK returns to it). */
     fun changeServer() = nav.navigate(Routes.connect(changeServer = true)) { launchSingleTop = true }
 
+    /** Settings found a server this TV is not paired with: the connect screen asks for its PIN. */
+    fun pairWith(address: String) = nav.navigate(Routes.pair(address)) { launchSingleTop = true }
+
     /**
      * Opens a card's destination. Only while [entry] is resumed (a second OK during the exit transition is
      * dropped), and single-top so a repeated event cannot stack the same page twice.
@@ -162,10 +169,14 @@ fun NavGraph(container: AppContainer) {
             NavHost(navController = nav, startDestination = Routes.CONNECT) {
                 composable(
                     Routes.CONNECT,
-                    arguments = listOf(navArgument("change") { type = NavType.BoolType; defaultValue = false }),
+                    arguments = listOf(
+                        navArgument("change") { type = NavType.BoolType; defaultValue = false },
+                        navArgument("pair") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    ),
                 ) { backStack ->
                     val change = backStack.arguments?.getBoolean("change") ?: false
-                    val vm: ConnectViewModel = viewModel(factory = container.connectFactory(changeServer = change))
+                    val pair = backStack.arguments?.getString("pair")
+                    val vm: ConnectViewModel = viewModel(factory = container.connectFactory(changeServer = change, pairAddress = pair))
                     ConnectScreen(vm, onConnected = {
                         // A fresh Home on the new server: everything below (pages of the old one) goes.
                         nav.navigate(Routes.home("home")) { popUpTo(nav.graph.id) { inclusive = true } }
@@ -197,7 +208,7 @@ fun NavGraph(container: AppContainer) {
                             container.toaster, container.settingsStrings, BuildConfig.VERSION_NAME,
                         ),
                     )
-                    Shell(SidebarEntry.SETTINGS) { SettingsScreen(vm) }
+                    Shell(SidebarEntry.SETTINGS) { SettingsScreen(vm, onPair = ::pairWith) }
                 }
                 composable(Routes.SHOW, arguments = listOf(navArgument("id") { type = NavType.IntType })) {
                     DetailPage(it, showId = it.arguments?.getInt("id") ?: 0, movieItemId = null)
@@ -219,7 +230,7 @@ fun NavGraph(container: AppContainer) {
                         factory = PlayerViewModel.Factory(
                             container.api, container.settingsRepo, container::progressReporter, container.toaster,
                             container.playerStrings, itemId, fromStart,
-                            port = { ExoPlayerPort(context, container.playbackErrorTexts) },
+                            port = { ExoPlayerPort(context, container.playbackErrorTexts, container.mediaHttp) },
                             exitScope = container.scope,
                             reconnect = container::reconnect,
                         ),

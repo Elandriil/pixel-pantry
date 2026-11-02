@@ -8,6 +8,9 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
 import app.pixelpantry.tv.R
 import app.pixelpantry.tv.api.ApiClient
+import app.pixelpantry.tv.api.BearerInterceptor
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import app.pixelpantry.tv.library.LibraryScanner
 import app.pixelpantry.tv.player.PlaybackErrorTexts
 import app.pixelpantry.tv.player.PlayerViewModel
@@ -34,14 +37,24 @@ private val Application.pantryDataStore: DataStore<Preferences> by preferencesDa
 
 /** [dataStoreOverride]: tests only; the app uses its `pantry` preferences file. */
 class AppContainer(private val app: Application, private val dataStoreOverride: DataStore<Preferences>? = null) {
-    val okHttp: OkHttpClient by lazy { ApiClient.defaultHttpClient() }
+    /** Shared by the API client, Coil and ExoPlayer; the interceptor adds the pairing token for the latter two. */
+    val okHttp: OkHttpClient by lazy { ApiClient.defaultHttpClient().newBuilder().addInterceptor(BearerInterceptor(api)).build() }
     val json: Json get() = ApiClient.defaultJson
 
+    /** ExoPlayer's HTTP source over [okHttp], so the stream and sidecars carry the token too. */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    val mediaHttp: DataSource.Factory by lazy { OkHttpDataSource.Factory(okHttp) }
+
     /**
-     * Starts on the stored server address, so a page restored after process death (which skips the connect
-     * screen) has a server to ask; the connect screen and Retry switch it as usual.
+     * Starts on the stored server address and pairing token, so a page restored after process death (which
+     * skips the connect screen) has a server to ask; the connect screen and Retry switch it as usual.
      */
-    val api: ApiClient by lazy { ApiClient(okHttp, json).also { it.baseUrl = storedBaseUrl(serverStore) } }
+    val api: ApiClient by lazy {
+        ApiClient(ApiClient.defaultHttpClient(), json).also {
+            it.baseUrl = storedBaseUrl(serverStore)
+            it.token = storedToken(serverStore)
+        }
+    }
     val dataStore: DataStore<Preferences> get() = dataStoreOverride ?: app.pantryDataStore
     val serverStore: ServerStore by lazy { ServerStore(dataStore) }
     val discovery: NsdDiscovery by lazy { NsdDiscovery(app) }
@@ -121,7 +134,13 @@ class AppContainer(private val app: Application, private val dataStoreOverride: 
      */
     suspend fun reconnect() {
         try {
-            (resolver.resolve() as? ServerResolver.Result.Found)?.let { api.baseUrl = it.baseUrl }
+            val found = resolver.resolve() as? ServerResolver.Result.Found ?: return
+            // Only the paired server is adopted here; any other one needs the connect screen (its PIN).
+            val pairing = serverStore.pairing.first()
+            if (pairing != null && found.serverId == pairing.serverId) {
+                api.token = pairing.token
+                api.baseUrl = found.baseUrl
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -129,11 +148,15 @@ class AppContainer(private val app: Application, private val dataStoreOverride: 
         }
     }
 
-    /** The connect screen: at startup ([changeServer] false) or from an Unreachable screen's "Change server". */
-    fun connectFactory(changeServer: Boolean) = ConnectViewModel.Factory(
+    /**
+     * The connect screen: at startup ([changeServer] false), from an Unreachable screen's "Change server", or
+     * from Settings to pair with the server at [pairAddress].
+     */
+    fun connectFactory(changeServer: Boolean, pairAddress: String? = null) = ConnectViewModel.Factory(
         resolver, api, serverStore, scope,
         onCachedUnreachable = { toaster.show(app.getString(R.string.server_not_reachable, it)) },
         changeServer = changeServer,
+        pairAddress = pairAddress,
     )
 
     /** One reporter per playback screen. */
@@ -148,6 +171,10 @@ class AppContainer(private val app: Application, private val dataStoreOverride: 
         internal fun storedBaseUrl(store: ServerStore): String = runCatching {
             runBlocking { store.manualAddress.first()?.takeIf { it.isNotBlank() } ?: store.lastKnownAddress.first() }
         }.getOrNull()?.takeIf { it.isNotBlank() }?.let { "http://$it" } ?: ""
+
+        /** The stored pairing's token, or null when the TV has not paired (or the store cannot be read). */
+        internal fun storedToken(store: ServerStore): String? =
+            runCatching { runBlocking { store.pairing.first()?.token } }.getOrNull()
     }
 
     val settingsRepo: SettingsRepo by lazy { SettingsRepo(api, serverStore, scope) }

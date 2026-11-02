@@ -221,6 +221,12 @@ class HomeViewModelTest {
         assertEquals("the initial load does not resolve", 0, reconnects.get())
     }
 
+    @Test fun aServerThatWantsPairingOnTheFirstLoadShowsUnreachableWithPairingRequired() = runTest {
+        homeBody = { json("""{"error":"Pairing required"}""").setResponseCode(401) }
+        val vm = newVm()
+        assertEquals(UiState.Unreachable(api.baseUrl, pairingRequired = true), vm.state.first { it !is UiState.Loading })
+    }
+
     @Test fun aFirstLoadWithoutAServerAddressResolvesFirst() = runTest {
         // Restored after process death before the connect screen ran (I6).
         val live = api.baseUrl

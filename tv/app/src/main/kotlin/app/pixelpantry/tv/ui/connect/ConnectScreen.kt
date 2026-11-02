@@ -30,6 +30,7 @@ import app.pixelpantry.tv.ui.components.FocusableButton
 import app.pixelpantry.tv.ui.components.Spinner
 import app.pixelpantry.tv.ui.components.TvTextField
 import app.pixelpantry.tv.ui.connect.ConnectViewModel.ConnectError
+import app.pixelpantry.tv.ui.connect.ConnectViewModel.PairError
 import app.pixelpantry.tv.ui.connect.ConnectViewModel.UiState
 
 @Composable
@@ -60,6 +61,12 @@ fun ConnectScreen(vm: ConnectViewModel, onConnected: () -> Unit) {
                     onDraftChange = vm::onDraftChange,
                     onConnect = vm::submitManual,
                     onRetry = vm::retry,
+                )
+                is UiState.Pairing -> PairWithServer(
+                    state = s,
+                    onPinChange = vm::onPinChange,
+                    onPair = vm::submitPin,
+                    onChangeAddress = vm::cancelPairing,
                 )
             }
         }
@@ -135,6 +142,62 @@ private fun NotFound(
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         FocusableButton(stringResource(R.string.connect_connect), onConnect)
         FocusableButton(stringResource(R.string.connect_retry), onRetry)
+    }
+    LaunchedEffect(Unit) { runCatching { fieldFocus.requestFocus() } }
+}
+
+/** The server answered but this TV is not paired with it: the PIN from its admin page. */
+@Composable
+private fun PairWithServer(
+    state: UiState.Pairing,
+    onPinChange: (String) -> Unit,
+    onPair: () -> Unit,
+    onChangeAddress: () -> Unit,
+) {
+    val fieldFocus = remember { FocusRequester() }
+    var text by remember { mutableStateOf(state.pinDraft) }
+    val secondary = MaterialTheme.colorScheme.onSurfaceVariant
+
+    Text(
+        stringResource(R.string.pair_title),
+        style = MaterialTheme.typography.headlineSmall,
+        color = MaterialTheme.colorScheme.onBackground,
+    )
+    Text(
+        stringResource(R.string.pair_detail, state.baseUrl),
+        style = MaterialTheme.typography.bodyLarge,
+        color = secondary,
+    )
+    TvTextField(
+        value = text,
+        onValueChange = {
+            text = it
+            onPinChange(it)
+        },
+        onSubmit = onPair,
+        label = stringResource(R.string.pair_pin_label),
+        placeholder = stringResource(R.string.pair_pin_hint),
+        keyboardType = KeyboardType.NumberPassword,
+        modifier = Modifier.focusRequester(fieldFocus),
+    )
+    when {
+        state.busy -> Text(stringResource(R.string.pair_checking), style = MaterialTheme.typography.bodyLarge, color = secondary)
+        state.error != null -> Text(
+            text = when (val e = state.error) {
+                PairError.InvalidPin -> stringResource(R.string.pair_error_invalid)
+                PairError.WrongPin -> stringResource(R.string.pair_error_wrong)
+                PairError.Locked -> stringResource(R.string.pair_error_locked)
+                PairError.Unreachable -> stringResource(R.string.pair_error_unreachable)
+                is PairError.Other -> e.message
+                null -> ""
+            },
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        FocusableButton(stringResource(R.string.pair_pair), onPair)
+        FocusableButton(stringResource(R.string.pair_change_address), onChangeAddress)
     }
     LaunchedEffect(Unit) { runCatching { fieldFocus.requestFocus() } }
 }

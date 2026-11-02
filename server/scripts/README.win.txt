@@ -26,7 +26,10 @@ First run
 9. Optional, for subtitles: create an account at https://www.opensubtitles.com,
    create an API consumer key, then enter the key, your username and password.
 10. Click "Rescan now". The library fills in as titles are matched.
-11. The TV app finds the server automatically on the local network.
+11. The TV app finds the server automatically on the local network and asks
+    once for the "TV pairing PIN" shown in the Status section of the admin
+    page. "Reset pairing" there gives a new PIN and disconnects every TV
+    until it enters the new one.
 
 Files
 -----

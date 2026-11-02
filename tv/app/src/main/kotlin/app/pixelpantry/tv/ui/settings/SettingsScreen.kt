@@ -57,7 +57,8 @@ private val RowMaxWidth = 960.dp
  * address field.
  */
 @Composable
-fun SettingsScreen(vm: SettingsViewModel) {
+fun SettingsScreen(vm: SettingsViewModel, onPair: (address: String) -> Unit) {
+    LaunchedEffect(vm) { vm.navEvents.collect { event -> if (event is SettingsViewModel.NavEvent.PairWith) onPair(event.address) } }
     val settings by vm.settings.collectAsStateWithLifecycle()
     val serverAddress by vm.serverAddress.collectAsStateWithLifecycle()
     val manualAddress by vm.manualAddress.collectAsStateWithLifecycle()

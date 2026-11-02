@@ -101,7 +101,7 @@ fun PlayerScreen(vm: PlayerViewModel, onExit: () -> Unit, onChangeServer: () -> 
                 detail = listOfNotNull(current.detail, current.fileName).joinToString("\n"),
                 primary = ButtonSpec(stringResource(R.string.player_back), vm::stopAndExit),
             )
-            is UiState.Unreachable -> UnreachableScreen(current.baseUrl, onRetry = vm::retry, onChangeServer = onChangeServer)
+            is UiState.Unreachable -> UnreachableScreen(current.baseUrl, current.pairingRequired, onRetry = vm::retry, onChangeServer = onChangeServer)
             is UiState.Playing -> Playback(
                 state = current,
                 exoPlayer = vm.exoPlayer,

@@ -118,7 +118,7 @@ fun ShowScreen(vm: ShowViewModel, onNavigate: (NavEvent) -> Unit, onChangeServer
             detail = s.message,
             primary = ButtonSpec(stringResource(R.string.show_retry), vm::load),
         )
-        is UiState.Unreachable -> UnreachableScreen(s.baseUrl, onRetry = vm::retry, onChangeServer = onChangeServer)
+        is UiState.Unreachable -> UnreachableScreen(s.baseUrl, s.pairingRequired, onRetry = vm::retry, onChangeServer = onChangeServer)
         is UiState.Loaded -> DetailPage(s, vm)
     }
 }

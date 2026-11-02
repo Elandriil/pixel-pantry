@@ -217,7 +217,9 @@ A single process that does five things.
   menu.
 - Tray menu: Open admin page, Rescan now, Open log folder, Quit.
 - No auth on the admin page; it binds to localhost only. The media API binds
-  to all interfaces.
+  to all interfaces. (Security audit, 2026-11-02: the media API now requires a
+  pairing token obtained with a PIN from the admin page, plus a LAN Host
+  header; see server/README.md "Security model".)
 
 ### API shape (for phase 2 compatibility)
 

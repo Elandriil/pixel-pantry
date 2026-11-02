@@ -4,10 +4,13 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import app.pixelpantry.tv.api.ApiClient
+import app.pixelpantry.tv.api.InfoResponse
+import app.pixelpantry.tv.server.Pairing
 import app.pixelpantry.tv.server.ServerLocator
 import app.pixelpantry.tv.server.ServerResolver
 import app.pixelpantry.tv.server.ServerStore
 import app.pixelpantry.tv.ui.connect.ConnectViewModel.ConnectError
+import app.pixelpantry.tv.ui.connect.ConnectViewModel.PairError
 import app.pixelpantry.tv.ui.connect.ConnectViewModel.UiState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +33,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
@@ -71,29 +75,44 @@ class ConnectViewModelTest {
     private suspend fun connect(
         locator: ServerLocator,
         store: ServerStore = this.store,
-        probe: (suspend (String) -> Boolean)? = null,
+        probe: (suspend (String) -> InfoResponse?)? = null,
         changeServer: Boolean = false,
+        pairAddress: String? = null,
     ): ConnectViewModel {
         val vm = if (probe == null) {
-            ConnectViewModel(locator, api, store, verifyScope = verifyScope, onCachedUnreachable = { unreachableToasts += it }, changeServer = changeServer)
+            ConnectViewModel(locator, api, store, verifyScope = verifyScope, onCachedUnreachable = { unreachableToasts += it }, changeServer = changeServer, pairAddress = pairAddress)
         } else {
-            ConnectViewModel(locator, api, store, probe, verifyScope, { unreachableToasts += it }, changeServer)
+            ConnectViewModel(locator, api, store, probe, verifyScope, { unreachableToasts += it }, changeServer, pairAddress)
         }
         vm.state.first { it !is UiState.Resolving }
         return vm
     }
 
+    /** The TV is paired with the server whose id is [serverId] ("srv": the one the fakes and [replyInfo] answer with). */
+    private suspend fun paired(serverId: String = "srv") = store.setPairing(Pairing("tok", serverId))
+    private val pantry = InfoResponse("Pixel Pantry", "1", "srv")
+    private fun found(url: String, source: ServerResolver.Source = ServerResolver.Source.MDNS, serverId: String? = "srv") =
+        ServerResolver.Result.Found(url, source, serverId)
+
     private val verifyScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val unreachableToasts = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
-    private fun replyInfo(name: String = "Pixel Pantry") = server.enqueue(
-        MockResponse().setHeader("Content-Type", "application/json").setBody("""{"name":"$name","version":"0.1.0"}"""),
+    private fun replyInfo(name: String = "Pixel Pantry", serverId: String = "srv") = server.enqueue(
+        MockResponse().setHeader("Content-Type", "application/json").setBody("""{"name":"$name","version":"0.1.0","serverId":"$serverId"}"""),
+    )
+    private fun replyPair(token: String = "new", serverId: String = "srv") = server.enqueue(
+        MockResponse().setHeader("Content-Type", "application/json").setBody("""{"token":"$token","serverId":"$serverId"}"""),
+    )
+    private fun replyError(code: Int, message: String) = server.enqueue(
+        MockResponse().setResponseCode(code).setHeader("Content-Type", "application/json").setBody("""{"error":"$message"}"""),
     )
 
-    @Test fun foundServerSetsBaseUrlAndIsReady() = runTest {
-        val vm = connect(FakeLocator(ServerResolver.Result.Found("http://10.0.0.5:8765", ServerResolver.Source.MDNS)))
+    @Test fun foundPairedServerSetsBaseUrlAndTokenAndIsReady() = runTest {
+        paired()
+        val vm = connect(FakeLocator(found("http://10.0.0.5:8765")))
         assertEquals(UiState.Ready("http://10.0.0.5:8765"), vm.state.value)
         assertEquals("http://10.0.0.5:8765", api.baseUrl)
+        assertEquals("tok", api.token)
     }
 
     @Test fun notFoundFailsWithTriedList() = runTest {
@@ -108,6 +127,7 @@ class ConnectViewModelTest {
     }
 
     @Test fun manualAddressIsProbedStoredAndReady() = runTest {
+        paired()
         val vm = connect(FakeLocator(notFound))
         replyInfo()
         vm.onDraftChange(serverAddress)
@@ -148,7 +168,7 @@ class ConnectViewModelTest {
         assertNull(store.manualAddress.first())
     }
 
-    @Test fun storageFailureStillConnects() = runTest {
+    @Test fun storageFailureStillConnectsAndPairs() = runTest {
         val broken = object : DataStore<Preferences> {
             override val data: Flow<Preferences> = flow { throw IOException("disk unreadable") }
             override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
@@ -158,8 +178,15 @@ class ConnectViewModelTest {
         replyInfo()
         vm.onDraftChange(serverAddress)
         vm.submitManual()
-        assertEquals(UiState.Ready("http://$serverAddress"), vm.state.first { it !is UiState.Resolving })
+        // the pairing cannot be read, so the server asks for its PIN; the pairing cannot be stored either, but works
+        val pairing = vm.state.first { it !is UiState.Resolving }
+        assertTrue(pairing.toString(), pairing is UiState.Pairing)
+        replyPair()
+        vm.onPinChange("123456")
+        vm.submitPin()
+        assertEquals(UiState.Ready("http://$serverAddress"), vm.state.first { it !is UiState.Pairing })
         assertEquals("http://$serverAddress", api.baseUrl)
+        assertEquals("new", api.token)
     }
 
     @Test fun submitUsesLatestDraftAndRetryKeepsIt() = runTest {
@@ -173,11 +200,13 @@ class ConnectViewModelTest {
     }
 
     @Test fun retryResolvesAgain() = runTest {
-        val locator = FakeLocator(notFound, ServerResolver.Result.Found("http://10.0.0.5:8765", ServerResolver.Source.LAST_KNOWN))
+        paired()
+        val locator = FakeLocator(notFound, found("http://10.0.0.5:8765", ServerResolver.Source.LAST_KNOWN))
         val vm = connect(locator)
         vm.retry()
+        // adopting a found server reads the stored pairing, so Ready arrives a moment later
+        assertEquals(UiState.Ready("http://10.0.0.5:8765"), vm.state.first { it !is UiState.Resolving })
         assertEquals(2, locator.calls)
-        assertEquals(UiState.Ready("http://10.0.0.5:8765"), vm.state.value)
         assertEquals("http://10.0.0.5:8765", api.baseUrl)
     }
 
@@ -190,12 +219,14 @@ class ConnectViewModelTest {
     // Startup with a cached address, and "Change server" (Task 13)
 
     @Test fun aCachedAddressGoesStraightToReadyAndVerifiesInTheBackground() = runTest {
+        paired()
         store.setLastKnownAddress(serverAddress)
         replyInfo()
         val locator = FakeLocator()
         val vm = connect(locator)
         assertEquals(UiState.Ready("http://$serverAddress"), vm.state.value)
         assertEquals("http://$serverAddress", api.baseUrl)
+        assertEquals("tok", api.token)
         assertEquals("no resolve: the cached address is used as is", 0, locator.calls)
         assertEquals("/api/info", server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.path)
         Thread.sleep(100)
@@ -203,9 +234,10 @@ class ConnectViewModelTest {
     }
 
     @Test fun aFailedBackgroundVerifyToastsTheAddressAndStaysReady() = runTest {
+        paired()
         store.setLastKnownAddress("10.0.0.99:8765")
         val probed = java.util.concurrent.ConcurrentLinkedQueue<String>()
-        val vm = connect(FakeLocator(), probe = { probed += it; false })
+        val vm = connect(FakeLocator(), probe = { probed += it; null })
         assertEquals(UiState.Ready("http://10.0.0.99:8765"), vm.state.value)
         withContext(Dispatchers.Default) { withTimeout(5_000) { while (unreachableToasts.isEmpty()) delay(10) } }
         assertEquals(listOf("10.0.0.99:8765"), unreachableToasts.toList())
@@ -214,19 +246,21 @@ class ConnectViewModelTest {
     }
 
     @Test fun aStoredManualAddressIsTheCachedAddress() = runTest {
+        paired()
         store.setLastKnownAddress("10.0.0.1:8765")
         store.setManualAddress("10.0.0.2:8765")
-        val vm = connect(FakeLocator(), probe = { true })
+        val vm = connect(FakeLocator(), probe = { pantry })
         assertEquals(UiState.Ready("http://10.0.0.2:8765"), vm.state.value)
     }
 
     @Test fun withoutACachedAddressTheResolverRuns() = runTest {
-        val locator = FakeLocator(ServerResolver.Result.Found("http://10.0.0.5:8765", ServerResolver.Source.MDNS))
+        val locator = FakeLocator(found("http://10.0.0.5:8765"))
         connect(locator)
         assertEquals(1, locator.calls)
     }
 
     @Test fun changeServerShowsTheFormPrefilledWithTheCurrentAddress() = runTest {
+        paired()
         store.setLastKnownAddress("10.0.0.5:8765")
         api.baseUrl = "http://10.0.0.5:8765"
         val locator = FakeLocator()
@@ -246,5 +280,117 @@ class ConnectViewModelTest {
         vm.onDraftChange(serverAddress)
         vm.submitManual()
         assertEquals(UiState.Ready("http://$serverAddress"), vm.state.first { it !is UiState.Resolving })
+    }
+
+    // Pairing: a server that is not the paired one asks for the PIN from its admin page
+
+    @Test fun aFoundServerWithoutAPairingAsksForThePin() = runTest {
+        val vm = connect(FakeLocator(found("http://10.0.0.5:8765")))
+        assertEquals(UiState.Pairing(baseUrl = "http://10.0.0.5:8765", serverId = "srv"), vm.state.value)
+        assertEquals("not adopted before the PIN is accepted", "", api.baseUrl)
+        assertNull(api.token)
+    }
+
+    @Test fun aFoundServerWithAnotherIdThanThePairingAsksForThePin() = runTest {
+        paired("other-server")
+        val vm = connect(FakeLocator(found("http://10.0.0.5:8765", ServerResolver.Source.MANUAL)))
+        assertEquals(UiState.Pairing(baseUrl = "http://10.0.0.5:8765", serverId = "srv"), vm.state.value)
+    }
+
+    @Test fun theRightPinPairsStoresThePairingAndIsReady() = runTest {
+        val vm = connect(FakeLocator(found("http://$serverAddress")))
+        replyPair(token = "new")
+        vm.onPinChange("123456")
+        assertEquals(UiState.Pairing("http://$serverAddress", "srv", pinDraft = "123456"), vm.state.value)
+        vm.submitPin()
+        assertEquals(UiState.Ready("http://$serverAddress"), vm.state.first { it !is UiState.Pairing })
+        assertEquals("http://$serverAddress", api.baseUrl)
+        assertEquals("new", api.token)
+        assertEquals(Pairing("new", "srv"), store.pairing.first())
+        val req = server.takeRequest()
+        assertEquals("/api/pair", req.path)
+        assertEquals("""{"pin":"123456"}""", req.body.readUtf8())
+    }
+
+    @Test fun aWrongPinStaysOnPairingWithTheError() = runTest {
+        val vm = connect(FakeLocator(found("http://$serverAddress")))
+        replyError(403, "Wrong PIN")
+        vm.onPinChange("000000")
+        vm.submitPin()
+        val s = vm.state.first { it is UiState.Pairing && !it.busy }
+        assertEquals(UiState.Pairing("http://$serverAddress", "srv", pinDraft = "000000", error = PairError.WrongPin), s)
+        assertNull(api.token)
+        assertNull(store.pairing.first())
+        // typing again clears the error
+        vm.onPinChange("000001")
+        assertEquals(UiState.Pairing("http://$serverAddress", "srv", pinDraft = "000001"), vm.state.value)
+    }
+
+    @Test fun tooManyWrongPinsShowTheLockout() = runTest {
+        val vm = connect(FakeLocator(found("http://$serverAddress")))
+        replyError(429, "Too many attempts, try again in a minute")
+        vm.onPinChange("000000")
+        vm.submitPin()
+        val s = vm.state.first { it is UiState.Pairing && !it.busy } as UiState.Pairing
+        assertEquals(PairError.Locked, s.error)
+    }
+
+    @Test fun aServerGoneDuringPairingShowsUnreachable() = runTest {
+        val vm = connect(FakeLocator(found("http://$serverAddress")))
+        server.shutdown()
+        vm.onPinChange("123456")
+        vm.submitPin()
+        val s = vm.state.first { it is UiState.Pairing && !it.busy } as UiState.Pairing
+        assertEquals(PairError.Unreachable, s.error)
+    }
+
+    @Test fun thePinMustBeSixDigitsBeforeAnythingIsSent() = runTest {
+        val vm = connect(FakeLocator(found("http://$serverAddress")))
+        for (bad in listOf("", "12", "12345", "1234567", "12345a", "123 456")) {
+            vm.onPinChange(bad)
+            vm.submitPin()
+            assertEquals(bad, PairError.InvalidPin, (vm.state.value as UiState.Pairing).error)
+        }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun cancellingPairingReturnsToTheAddressFormPrefilled() = runTest {
+        val vm = connect(FakeLocator(found("http://10.0.0.5:8765")))
+        vm.cancelPairing()
+        assertEquals(UiState.Failed(tried = listOf("http://10.0.0.5:8765"), manualDraft = "10.0.0.5:8765"), vm.state.value)
+    }
+
+    @Test fun aCachedAddressWithoutAPairingResolvesAndAsksForThePin() = runTest {
+        store.setLastKnownAddress("10.0.0.5:8765")
+        val locator = FakeLocator(found("http://10.0.0.5:8765", ServerResolver.Source.LAST_KNOWN))
+        val vm = connect(locator)
+        assertEquals(1, locator.calls)
+        assertEquals(UiState.Pairing("http://10.0.0.5:8765", "srv"), vm.state.value)
+    }
+
+    @Test fun aManualAddressOfAnUnpairedServerIsStoredAndAsksForThePin() = runTest {
+        val vm = connect(FakeLocator(notFound))
+        replyInfo()
+        vm.onDraftChange(serverAddress)
+        vm.submitManual()
+        assertEquals(UiState.Pairing("http://$serverAddress", "srv"), vm.state.first { it !is UiState.Resolving })
+        assertEquals(serverAddress, store.manualAddress.first())
+        assertEquals("", api.baseUrl)
+    }
+
+    @Test fun openedToPairAnAddressProbesItAndAsksForThePin() = runTest {
+        replyInfo()
+        val vm = connect(FakeLocator(), pairAddress = serverAddress)
+        assertEquals(UiState.Pairing("http://$serverAddress", "srv"), vm.state.value)
+        assertEquals("/api/info", server.takeRequest().path)
+    }
+
+    @Test fun openedToPairAnAddressThatDoesNotAnswerShowsTheForm() = runTest {
+        server.shutdown()
+        val vm = connect(FakeLocator(), pairAddress = serverAddress)
+        assertEquals(
+            UiState.Failed(tried = listOf("http://$serverAddress"), manualDraft = serverAddress, error = ConnectError.Unreachable(serverAddress)),
+            vm.state.value,
+        )
     }
 }

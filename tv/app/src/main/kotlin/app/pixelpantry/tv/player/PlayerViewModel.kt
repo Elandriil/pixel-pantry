@@ -17,7 +17,8 @@ import app.pixelpantry.tv.player.SubtitlePlan.OFF
 import app.pixelpantry.tv.player.ProgressReporter.Reason
 import app.pixelpantry.tv.settings.SettingsRepo
 import app.pixelpantry.tv.ui.components.Toaster
-import app.pixelpantry.tv.ui.components.isUnreachable
+import app.pixelpantry.tv.ui.components.blocksPage
+import app.pixelpantry.tv.ui.components.isUnauthorized
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -94,7 +95,7 @@ class PlayerViewModel(
         data class Error(val title: String, val detail: String, val fileName: String?) : UiState
 
         /** The item could not be loaded because [baseUrl] did not answer at all: Retry / Change server. */
-        data class Unreachable(val baseUrl: String) : UiState
+        data class Unreachable(val baseUrl: String, val pairingRequired: Boolean = false) : UiState
 
         data class Playing(
             val detail: ItemDetail,
@@ -263,8 +264,8 @@ class PlayerViewModel(
                 api.item(itemId)
             } catch (e: ApiException) {
                 if (exiting) return@launch
-                _state.value = if (e.isUnreachable()) {
-                    UiState.Unreachable(api.baseUrl)
+                _state.value = if (e.blocksPage()) {
+                    UiState.Unreachable(api.baseUrl, pairingRequired = e.isUnauthorized())
                 } else {
                     UiState.Error(strings.playbackFailed, e.message.orEmpty(), fileName = null)
                 }

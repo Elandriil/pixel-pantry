@@ -27,6 +27,22 @@
     <string name="connect_error_invalid">Enter host:port, e.g. 192.168.1.20:8765</string>
     <string name="connect_error_unreachable">Cannot reach %1$s</string>
 
+    <!-- Pairing (the PIN from the server's admin page) -->
+    <string name="pair_title">Pair with this server</string>
+    <string name="pair_detail">On the PC, open %1$s/admin and type the TV pairing PIN shown there.</string>
+    <string name="pair_pin_label">Pairing PIN</string>
+    <string name="pair_pin_hint">6 digits</string>
+    <string name="pair_pair">Pair</string>
+    <string name="pair_change_address">Change address</string>
+    <string name="pair_checking">Checking…</string>
+    <string name="pair_error_invalid">Enter the 6-digit PIN</string>
+    <string name="pair_error_wrong">Wrong PIN</string>
+    <string name="pair_error_locked">Too many attempts. Wait a minute, then try again.</string>
+    <string name="pair_error_unreachable">Cannot reach the server</string>
+    <string name="pairing_required_title">The server asks for pairing</string>
+    <string name="pairing_required_detail">%1$s no longer accepts this TV. Enter the PIN from its admin page again.</string>
+    <string name="pairing_required_pair">Pair</string>
+
     <!-- Home -->
     <string name="home_empty">No videos yet. Add files on the PC and press Rescan.</string>
     <string name="home_rescan">Rescan</string>

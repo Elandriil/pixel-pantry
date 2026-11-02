@@ -9,7 +9,8 @@ import app.pixelpantry.tv.api.HistoryEntry
 import app.pixelpantry.tv.api.ItemSummary
 import app.pixelpantry.tv.api.Stats
 import app.pixelpantry.tv.ui.components.Toaster
-import app.pixelpantry.tv.ui.components.isUnreachable
+import app.pixelpantry.tv.ui.components.blocksPage
+import app.pixelpantry.tv.ui.components.isUnauthorized
 import app.pixelpantry.tv.ui.home.HomeViewModel.NavEvent
 import app.pixelpantry.tv.util.formatEpisodeTag
 import app.pixelpantry.tv.util.formatWatched
@@ -62,7 +63,7 @@ class HistoryViewModel(
         data object Loading : UiState
         data class Error(val message: String) : UiState
         /** The first load got no answer from [baseUrl]. */
-        data class Unreachable(val baseUrl: String) : UiState
+        data class Unreachable(val baseUrl: String, val pairingRequired: Boolean = false) : UiState
         /** [days] is empty when nothing has been watched yet. */
         data class Loaded(val stats: Stats, val days: List<DayGroup>) : UiState
     }
@@ -112,7 +113,7 @@ class HistoryViewModel(
         } catch (e: ApiException) {
             when {
                 _state.value is UiState.Loaded -> toaster.show(strings.couldNotRefresh)
-                e.isUnreachable() -> _state.value = UiState.Unreachable(api.baseUrl)
+                e.blocksPage() -> _state.value = UiState.Unreachable(api.baseUrl, pairingRequired = e.isUnauthorized())
                 else -> _state.value = UiState.Error(e.message.orEmpty())
             }
         }

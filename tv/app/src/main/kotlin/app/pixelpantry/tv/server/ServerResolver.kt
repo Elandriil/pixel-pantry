@@ -1,6 +1,7 @@
 package app.pixelpantry.tv.server
 
 import app.pixelpantry.tv.api.ApiClient
+import app.pixelpantry.tv.api.InfoResponse
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
@@ -23,15 +24,23 @@ suspend fun ServerLocator.resolveOrNotFound(): ServerResolver.Result = try {
     ServerResolver.Result.NotFound(tried = emptyList())
 }
 
+/**
+ * The three places a server can come from, in order. With a pairing stored, the last known address and mDNS
+ * announcements are only adopted when they answer with the paired server's id, so another "Pixel Pantry" on the
+ * network cannot take the place of the owner's server; a typed (manual) address is always adopted and leads to
+ * pairing when it is a different server.
+ */
 class ServerResolver(
     private val store: ServerStore,
     private val discovery: Discovery,
-    private val probe: suspend (baseUrl: String) -> Boolean,
+    /** `/api/info` of the candidate, or null when nothing (or something else) answers there. */
+    private val probe: suspend (baseUrl: String) -> InfoResponse?,
 ) : ServerLocator {
     enum class Source { MANUAL, LAST_KNOWN, MDNS }
 
     sealed class Result {
-        data class Found(val baseUrl: String, val source: Source) : Result()
+        /** [serverId] is null for a server from before pairing existed. */
+        data class Found(val baseUrl: String, val source: Source, val serverId: String?) : Result()
         data class NotFound(val tried: List<String>) : Result()
     }
 
@@ -42,11 +51,15 @@ class ServerResolver(
 
     override suspend fun resolve(): Result {
         val tried = mutableListOf<String>()
+        val pairedId = store.pairing.first()?.serverId
 
         suspend fun attempt(address: String, source: Source): Result.Found? {
             val url = "http://$address"
             tried += url
-            return if (probe(url)) Result.Found(url, source) else null
+            val info = probe(url) ?: return null
+            // automatic sources must be the paired server; the owner's typed address is taken as it is
+            if (pairedId != null && source != Source.MANUAL && info.serverId != pairedId) return null
+            return Result.Found(url, source, info.serverId)
         }
 
         // A manual address wins while it answers. When it stops answering (the PC got a new DHCP address),
@@ -83,13 +96,13 @@ class ServerResolver(
          * Production probe: the candidate must answer /api/info as "Pixel Pantry". It asks the candidate directly
          * and never changes [ApiClient.baseUrl].
          */
-        fun apiProbe(api: ApiClient): suspend (String) -> Boolean = { url ->
+        fun apiProbe(api: ApiClient): suspend (String) -> InfoResponse? = { url ->
             try {
-                api.info(url).name == "Pixel Pantry"
+                api.info(url).takeIf { it.name == "Pixel Pantry" }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                false
+                null
             }
         }
     }

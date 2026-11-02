@@ -74,7 +74,7 @@ fun HomeScreen(
             detail = s.message,
             primary = ButtonSpec(stringResource(R.string.home_retry)) { vm.load() },
         )
-        is UiState.Unreachable -> UnreachableScreen(s.baseUrl, onRetry = vm::retry, onChangeServer = onChangeServer)
+        is UiState.Unreachable -> UnreachableScreen(s.baseUrl, s.pairingRequired, onRetry = vm::retry, onChangeServer = onChangeServer)
         is UiState.Loaded ->
             if (s.rows.isEmpty()) EmptyLibrary(onRescan = vm::rescan)
             else {
