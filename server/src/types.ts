@@ -26,7 +26,7 @@ export interface ProgressResponse { sessionId: number; watched: boolean }
 export interface DeleteResponse { trashed: string[] }
 export interface SubtitleListResponse { tracks: SubtitleTrack[] }
 export interface SubtitleSearchResponse { results: OsResult[] }
-export interface InfoResponse { name: 'Pixel Pantry'; version: '1' }
+export interface InfoResponse { name: 'Pixel Pantry'; version: '1'; serverId: string /* the TV checks it before sending its token */ }
 export interface Settings { skipBackSeconds: number; skipForwardSeconds: number; autoplayNext: boolean }
 
 /** A value fixed at construction or read fresh on every use (e.g. a getter over the live config). */

@@ -15,6 +15,10 @@ import { fakeProbe, fakeTmdb, legacyLibraries, tmpDir } from "../helpers";
 export { seedMovie, seedShow } from "../helpers";
 
 export const NOW = 1_700_000_000_000;
+/** The paired TV's token in every test config; `request` sends it unless the caller sets Authorization itself. */
+export const TEST_TOKEN = "a".repeat(64);
+export const TEST_PIN = "123456";
+export const TEST_SERVER_ID = "b".repeat(32);
 
 const noNetwork = (async (input: RequestInfo | URL) => {
   throw new Error(`unexpected network call: ${String(input)}`);
@@ -39,7 +43,11 @@ export function makeDeps(overrides: Partial<Deps> = {}): TestDeps {
   const repo = new Repo(db);
   const log = new Logger(join(dir, "logs", "server.log"));
   const mediaRoot = join(dir, "media");
-  let cfg: Config = { ...DEFAULT_CONFIG, libraries: legacyLibraries(mediaRoot) };
+  let cfg: Config = {
+    ...DEFAULT_CONFIG,
+    libraries: legacyLibraries(mediaRoot),
+    auth: { serverId: TEST_SERVER_ID, pairingPin: TEST_PIN, clientToken: TEST_TOKEN },
+  };
   let clock = NOW;
   let quits = 0;
   const trashed: string[][] = [];
@@ -87,7 +95,9 @@ export async function request(
   init?: RequestInit,
   env?: Record<string, unknown>,
 ): Promise<{ status: number; json: any; headers: Headers }> {
-  const res = await app.request(path, init, env);
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Authorization")) headers.set("Authorization", `Bearer ${TEST_TOKEN}`);
+  const res = await app.request(path, { ...init, headers }, env);
   const text = await res.text();
   let json: any = null;
   try {
@@ -96,4 +106,11 @@ export async function request(
     json = text;
   }
   return { status: res.status, json, headers: res.headers };
+}
+
+/** `app.request` with the paired token added, for tests that need the raw Response (bodies, streams). */
+export function raw(app: Hono, path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Authorization")) headers.set("Authorization", `Bearer ${TEST_TOKEN}`);
+  return Promise.resolve(app.request(path, { ...init, headers }));
 }

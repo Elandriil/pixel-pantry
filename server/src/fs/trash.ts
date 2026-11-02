@@ -60,5 +60,7 @@ export async function trashPaths(paths: string[], run: RunFn = defaultRun, platf
     driveCheck(paths),
     ...calls,
   ].join("; ");
-  return run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]);
+  // -EncodedCommand (base64 UTF-16LE): the 32 K command-line limit of -Command would fail a show with hundreds
+  // of files, and no path can break the quoting of the command line itself.
+  return run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]);
 }

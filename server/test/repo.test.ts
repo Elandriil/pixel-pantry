@@ -238,3 +238,22 @@ test("mergeShowInto moves duplicate episodes' files to the target, re-parents th
   expect(repo.getShow(from)!.deleted_at).toBe(99);
   expect((db.query("SELECT item_id FROM playback").all() as { item_id: number }[]).map((r) => r.item_id)).toEqual([toE1]);
 });
+
+test("countShows and countMovies count live rows of one category only", () => {
+  const repo = setup();
+  const now = 1;
+  const a = repo.insertShow({ category: "tv", parsed_key: "a", parsed_title: "A", title: "A" }, now);
+  repo.insertShow({ category: "tv", parsed_key: "b", parsed_title: "B", title: "B" }, now);
+  repo.insertShow({ category: "anime", parsed_key: "c", parsed_title: "C", title: "C" }, now);
+  repo.setShowDeleted(a, 5);
+  repo.insertItem({ type: "movie", category: "movies", parsed_key: "m1", parsed_title: "M1", title: "M1" }, now);
+  const m2 = repo.insertItem({ type: "movie", category: "movies", parsed_key: "m2", parsed_title: "M2", title: "M2" }, now);
+  repo.insertItem({ type: "movie", category: "tv", parsed_key: "m3", parsed_title: "M3", title: "M3" }, now);
+  repo.setItemDeleted(m2, 5);
+  expect(repo.countShows("tv")).toBe(1);
+  expect(repo.countShows("anime")).toBe(1);
+  expect(repo.countShows("movies")).toBe(0);
+  expect(repo.countMovies("movies")).toBe(1);
+  expect(repo.countMovies("tv")).toBe(1);
+  expect(repo.countMovies("anime")).toBe(0);
+});

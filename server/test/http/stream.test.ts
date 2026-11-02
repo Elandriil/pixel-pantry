@@ -5,7 +5,7 @@ import { buildApp } from "../../src/http/app";
 import { ImageStore } from "../../src/metadata/images";
 import type { FetchFn } from "../../src/types";
 import { tmpDir } from "../helpers";
-import { makeDeps, seedMovie } from "./helpers";
+import { makeDeps, seedMovie, raw } from "./helpers";
 
 const SIZE = 10_000;
 const bytes = new Uint8Array(SIZE).map((_, i) => (i * 7 + 3) % 256);
@@ -25,7 +25,7 @@ function setup(ext = "mkv", write = true) {
 }
 
 const get = (app: ReturnType<typeof setup>["app"], id: number, range?: string, method = "GET") =>
-  app.request(`/api/items/${id}/stream`, { method, headers: range ? { Range: range } : {} });
+  raw(app, `/api/items/${id}/stream`, { method, headers: range ? { Range: range } : {} });
 
 describe("GET /api/items/:id/stream", () => {
   test("full file without Range", async () => {
@@ -136,7 +136,7 @@ describe("GET /api/items/:id/stream", () => {
     const { app, id } = setup("mkv", false);
     expect((await get(app, id)).status).toBe(404);
     expect((await get(app, 9999)).status).toBe(404);
-    expect((await app.request("/api/items/abc/stream")).status).toBe(400);
+    expect((await raw(app, "/api/items/abc/stream")).status).toBe(400);
   });
 });
 
@@ -155,7 +155,7 @@ describe("GET /api/images/:size/:name", () => {
 
   test("serves image with long cache header", async () => {
     const { app } = imgApp();
-    const res = await app.request("/api/images/w500/abc.png");
+    const res = await raw(app, "/api/images/w500/abc.png");
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("image/png");
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=31536000");
@@ -164,20 +164,20 @@ describe("GET /api/images/:size/:name", () => {
 
   test("bad size -> 400", async () => {
     const { app, calls } = imgApp();
-    const res = await app.request("/api/images/w999/abc.png");
+    const res = await raw(app, "/api/images/w999/abc.png");
     expect(res.status).toBe(400);
     expect(calls()).toBe(0);
   });
 
   test("invalid name or upstream failure -> 404", async () => {
     const { app } = imgApp();
-    expect((await app.request("/api/images/w500/evil.txt")).status).toBe(404);
+    expect((await raw(app, "/api/images/w500/evil.txt")).status).toBe(404);
     const deps = makeDeps();
     deps.images = new ImageStore({
       dir: join(tmpDir(), "images"),
       fetchFn: (async () => new Response("no", { status: 404 })) as unknown as FetchFn,
     });
-    const res = await buildApp(deps).request("/api/images/w500/gone.jpg");
+    const res = await raw(buildApp(deps), "/api/images/w500/gone.jpg");
     expect(res.status).toBe(404);
     expect((await res.json()) as any).toHaveProperty("error");
   });

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { buildApp } from "../../src/http/app";
 import { reportProgress, setTrackChoice, setWatched } from "../../src/playback/progress";
-import { makeDeps, NOW, request, seedMovie, seedShow } from "./helpers";
+import { makeDeps, NOW, request, seedMovie, seedShow, TEST_SERVER_ID } from "./helpers";
 
 const MIN = 60 * 1000;
 
@@ -141,7 +141,7 @@ test("GET /api/info identifies the server, uncached", async () => {
   const { app } = setup();
   const r = await request(app, "/api/info");
   expect(r.status).toBe(200);
-  expect(r.json).toEqual({ name: "Pixel Pantry", version: "1" });
+  expect(r.json).toEqual({ name: "Pixel Pantry", version: "1", serverId: TEST_SERVER_ID });
   expect(r.headers.get("Cache-Control")).toBe("no-store");
 });
 

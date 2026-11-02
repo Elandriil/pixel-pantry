@@ -295,7 +295,7 @@ export function catalogRoutes(deps: Deps): Hono {
   });
 
   /** Lets a client check that an address really is a Pixel Pantry server. */
-  r.get("/info", (c) => c.json({ name: "Pixel Pantry", version: "1" } satisfies InfoResponse));
+  r.get("/info", (c) => c.json({ name: "Pixel Pantry", version: "1", serverId: deps.config().auth.serverId } satisfies InfoResponse));
 
   return r;
 }

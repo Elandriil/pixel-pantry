@@ -1,7 +1,7 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { existsSync } from "node:fs";
 import { lanAddresses } from "../../net";
-import { isCategory, libraryConflict, newLibraryId, type Config, type Library } from "../../config";
+import { isCategory, libraryConflict, newLibraryId, newPairing, type Config, type Library } from "../../config";
 import { LOW_CONFIDENCE } from "../../library/scanner";
 import adminHtmlModule from "../admin/index.html" with { type: "text" };
 import { jsonBody } from "../body";
@@ -38,7 +38,8 @@ const loopbackOnly: MiddlewareHandler<Env> = async (c, next) => {
 
 const mask = (v: string) => (v ? MASK : "");
 
-function maskedConfig(c: Config): Config {
+/** The config as the page sees it: secrets masked, the pairing secrets left out entirely (the PIN is in status). */
+function maskedConfig(c: Config): Omit<Config, "auth"> {
   return {
     libraries: c.libraries,
     port: c.port,
@@ -110,7 +111,9 @@ function mergeConfig(old: Config, body: Record<string, unknown>): Config {
   const o = (os ?? {}) as Record<string, unknown>;
   const sww = body.startWithWindows;
   if (sww !== undefined && typeof sww !== "boolean") throw new HttpError(400, "startWithWindows must be a boolean");
+  // auth is never settable here: the PIN and token change only through the pairing reset
   return {
+    auth: old.auth,
     libraries: librariesOf(body.libraries, old.libraries),
     port: (port as number | undefined) ?? old.port,
     tmdbApiKey: secret(body.tmdbApiKey, "tmdbApiKey", old.tmdbApiKey),
@@ -152,11 +155,13 @@ export function adminRoutes(deps: Deps): Hono<Env> {
       libraries: cfg.libraries.map((l) => ({ ...l, found: existsSync(l.path) })),
       scan,
       counts: {
-        tv: repo.listShows("tv").length,
-        anime: repo.listShows("anime").length,
-        movies: repo.listMovies("movies").length,
+        tv: repo.countShows("tv"),
+        anime: repo.countShows("anime"),
+        movies: repo.countMovies("movies"),
       },
       lastScanError: scan.lastError,
+      pairingPin: cfg.auth.pairingPin,
+      serverId: cfg.auth.serverId,
       tmdbConfigured: cfg.tmdbApiKey !== "",
       opensubtitlesConfigured: cfg.opensubtitles.apiKey !== "",
     });
@@ -173,6 +178,14 @@ export function adminRoutes(deps: Deps): Hono<Env> {
     if (keyChanged) repo.resetUnmatchedAttempts();
     if (keyChanged || !sameLibraries(next.libraries, old.libraries)) void scanner.scan();
     return c.json({ restartRequired: next.port !== old.port });
+  });
+
+  /** A new PIN and token: every TV has to pair again (the way to lock out a device that should no longer have access). */
+  r.post("/admin/api/pairing/reset", (c) => {
+    const next = newPairing(deps.config());
+    deps.saveConfig(next);
+    deps.log.info("pairing reset: all TVs must pair again");
+    return c.json({ pairingPin: next.auth.pairingPin });
   });
 
   // Low-confidence matches have a tmdb_id but are listed too, so they can be confirmed or corrected.

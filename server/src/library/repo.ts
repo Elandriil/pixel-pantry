@@ -142,6 +142,8 @@ export class Repo {
       showDeleted: p("UPDATE shows SET deleted_at = ? WHERE id = ?"),
       showList: p("SELECT * FROM shows WHERE deleted_at IS NULL AND (?1 IS NULL OR category = ?1) ORDER BY title COLLATE NOCASE"),
       showListAll: p("SELECT * FROM shows WHERE (?1 IS NULL OR category = ?1) ORDER BY title COLLATE NOCASE"),
+      showCount: p("SELECT COUNT(*) AS n FROM shows WHERE deleted_at IS NULL AND category = ?"),
+      movieCount: p("SELECT COUNT(*) AS n FROM items WHERE type = 'movie' AND deleted_at IS NULL AND category = ?"),
 
       seasonGet: p("SELECT * FROM seasons WHERE show_id = ? AND number = ?"),
       seasonInsert: p("INSERT INTO seasons(show_id, number, name, poster_path, episode_count) VALUES (?, ?, ?, ?, ?)"),
@@ -417,6 +419,15 @@ export class Repo {
   /** Live movies without a TMDB id or with a low-confidence match. */
   listUnmatchedMovies(): ItemRow[] {
     return this.q.unmatchedMovies!.all() as ItemRow[];
+  }
+
+  /** Live shows of a category, without loading the rows (the admin status is polled every few seconds). */
+  countShows(category: string): number {
+    return (this.q.showCount!.get(category) as { n: number }).n;
+  }
+
+  countMovies(category: string): number {
+    return (this.q.movieCount!.get(category) as { n: number }).n;
   }
 
   listMovies(category: string): ItemRow[] {

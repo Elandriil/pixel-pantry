@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { loadConfig, saveConfig, type Config } from "./config";
+import { ensureAuth, loadConfig, saveConfig, type Config } from "./config";
 import { openDb } from "./db/db";
 import { trashPaths } from "./fs/trash";
 import type { Deps } from "./http/deps";
@@ -27,7 +27,10 @@ export function buildDeps(opts: {
 }): Deps & { db: Database } {
   const { dataDir, log } = opts;
   const cfgFile = configPath(dataDir);
-  let cfg = loadConfig(cfgFile);
+  // First start (or an upgrade from a version without pairing): generate the pairing secrets and keep them.
+  const ensured = ensureAuth(loadConfig(cfgFile));
+  if (ensured.changed) saveConfig(cfgFile, ensured.config);
+  let cfg = ensured.config;
   const config = () => cfg;
 
   const db = openDb(join(dataDir, "pantry.db"));

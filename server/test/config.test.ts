@@ -3,6 +3,8 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   DEFAULT_CONFIG,
+  ensureAuth,
+  newPairing,
   librariesFromMediaRoot,
   libraryConflict,
   libraryFilePath,
@@ -89,4 +91,38 @@ test("libraryConflict rejects the same, a nested and an enclosing folder", () =>
   expect(libraryConflict(lib("/m"), [tv])).toBe("/m contains the library folder /m/tv");
   expect(libraryConflict(lib("/m/tv2"), [tv])).toBeNull();
   expect(libraryConflict(lib("/m/movies"), [tv])).toBeNull();
+});
+
+test("ensureAuth generates a server id, pairing pin and client token once and keeps them afterwards", () => {
+  const first = ensureAuth(DEFAULT_CONFIG);
+  expect(first.changed).toBe(true);
+  expect(first.config.auth.serverId).toMatch(/^[0-9a-f]{32}$/);
+  expect(first.config.auth.pairingPin).toMatch(/^\d{6}$/);
+  expect(first.config.auth.clientToken).toMatch(/^[0-9a-f]{64}$/);
+  const second = ensureAuth(first.config);
+  expect(second.changed).toBe(false);
+  expect(second.config).toEqual(first.config);
+  // a pin alone missing is refilled without touching the others
+  const partial = ensureAuth({ ...first.config, auth: { ...first.config.auth, pairingPin: "" } });
+  expect(partial.changed).toBe(true);
+  expect(partial.config.auth.serverId).toBe(first.config.auth.serverId);
+  expect(partial.config.auth.clientToken).toBe(first.config.auth.clientToken);
+  expect(partial.config.auth.pairingPin).toMatch(/^\d{6}$/);
+});
+
+test("newPairing replaces both the pin and the token (every paired TV must pair again)", () => {
+  const a = ensureAuth(DEFAULT_CONFIG).config;
+  const b = newPairing(a);
+  expect(b.auth.serverId).toBe(a.auth.serverId);
+  expect(b.auth.pairingPin).not.toBe(a.auth.pairingPin);
+  expect(b.auth.clientToken).not.toBe(a.auth.clientToken);
+  expect(b.auth.pairingPin).toMatch(/^\d{6}$/);
+});
+
+test("loadConfig reads auth from the file and defaults missing auth fields to empty strings", () => {
+  const p = join(tmpDir(), "config.json");
+  writeFileSync(p, JSON.stringify({ auth: { serverId: "s", pairingPin: "123456", clientToken: "t" } }));
+  expect(loadConfig(p).auth).toEqual({ serverId: "s", pairingPin: "123456", clientToken: "t" });
+  writeFileSync(p, JSON.stringify({ auth: { serverId: 5 } }));
+  expect(loadConfig(p).auth).toEqual({ serverId: "", pairingPin: "", clientToken: "" });
 });

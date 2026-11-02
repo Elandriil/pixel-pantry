@@ -9,12 +9,24 @@ export interface Library {
   category: Category;
 }
 
+/**
+ * What the TV app pairs with. `serverId` names this installation (the TV checks it before sending its token),
+ * `pairingPin` is shown on the admin page and typed once on the TV, `clientToken` is what a paired TV sends on
+ * every API request. All three are generated on first start; `newPairing` rotates the pin and token.
+ */
+export interface AuthConfig {
+  serverId: string;
+  pairingPin: string;
+  clientToken: string;
+}
+
 export interface Config {
   libraries: Library[];
   port: number;
   tmdbApiKey: string;
   opensubtitles: { apiKey: string; username: string; password: string };
   startWithWindows: boolean;
+  auth: AuthConfig;
 }
 
 export const CATEGORIES: readonly Category[] = ["tv", "anime", "movies"];
@@ -25,6 +37,7 @@ export const DEFAULT_CONFIG: Config = {
   tmdbApiKey: "",
   opensubtitles: { apiKey: "", username: "", password: "" },
   startWithWindows: true,
+  auth: { serverId: "", pairingPin: "", clientToken: "" },
 };
 
 export const isCategory = (v: unknown): v is Category => typeof v === "string" && (CATEGORIES as string[]).includes(v);
@@ -34,6 +47,36 @@ export function newLibraryId(): string {
   const bytes = new Uint8Array(4);
   crypto.getRandomValues(bytes);
   return `lib-${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+const hex = (bytes: number): string => {
+  const b = new Uint8Array(bytes);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+};
+
+/** Six digits, uniformly distributed (rejection sampling over a 32-bit value). */
+export function newPairingPin(): string {
+  const limit = 4_294_000_000; // largest multiple of 1 000 000 below 2^32
+  const v = new Uint32Array(1);
+  do crypto.getRandomValues(v);
+  while (v[0]! >= limit);
+  return String(v[0]! % 1_000_000).padStart(6, "0");
+}
+
+/** Fills whichever auth values are missing (first start, or a config written by an older version). */
+export function ensureAuth(c: Config): { config: Config; changed: boolean } {
+  const auth = { ...c.auth };
+  let changed = false;
+  if (!auth.serverId) (auth.serverId = hex(16)), (changed = true);
+  if (!auth.pairingPin) (auth.pairingPin = newPairingPin()), (changed = true);
+  if (!auth.clientToken) (auth.clientToken = hex(32)), (changed = true);
+  return { config: changed ? { ...c, auth } : c, changed };
+}
+
+/** A fresh pin and token: every TV paired so far has to pair again. The server id stays. */
+export function newPairing(c: Config): Config {
+  return { ...c, auth: { serverId: c.auth.serverId, pairingPin: newPairingPin(), clientToken: hex(32) } };
 }
 
 /**
@@ -69,6 +112,7 @@ export function loadConfig(path: string, exists: (p: string) => boolean = exists
     raw = JSON.parse(readFileSync(path, "utf8")) ?? {};
   } catch {}
   const os = raw.opensubtitles ?? {};
+  const auth = raw.auth ?? {};
   const str = (v: unknown, d: string) => (typeof v === "string" ? v : d);
   const libraries = parseLibraries(raw.libraries) ?? librariesFromMediaRoot(str(raw.mediaRoot, ""), exists);
   return {
@@ -81,6 +125,11 @@ export function loadConfig(path: string, exists: (p: string) => boolean = exists
       password: str(os.password, ""),
     },
     startWithWindows: typeof raw.startWithWindows === "boolean" ? raw.startWithWindows : DEFAULT_CONFIG.startWithWindows,
+    auth: {
+      serverId: str(auth.serverId, ""),
+      pairingPin: str(auth.pairingPin, ""),
+      clientToken: str(auth.clientToken, ""),
+    },
   };
 }
 

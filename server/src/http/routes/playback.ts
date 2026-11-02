@@ -37,24 +37,33 @@ async function fileTargets(deps: Deps, f: FileRow): Promise<string[]> {
  * What to send to the bin for `files`. With `folders`, a top-level folder below the library folder
  * (`tv/Severance`) whose every live video belongs to `files` is trashed whole instead of file by file.
  */
+/** `<library id>/<top-level folder>` of a file at least one folder deep, else null. */
+function topFolderOf(relPath: string): string | null {
+  const parts = relPath.split("/");
+  return parts.length >= 3 ? `${parts[0]}/${parts[1]}` : null;
+}
+
 async function trashTargets(deps: Deps, files: FileRow[], folders: boolean): Promise<string[]> {
   const libraries = deps.config().libraries;
   const ours = new Set(files.map((f) => f.id));
-  const all = folders ? deps.repo.listLiveFiles() : [];
-  const out = new Set<string>();
+  // Top-level folders whose every live video is among `files`, computed once over the library.
   const wholeFolders = new Set<string>();
-  for (const f of files) {
-    const parts = f.rel_path.split("/");
-    if (folders && parts.length >= 3) {
-      const folder = parts.slice(0, 2).join("/");
-      if (wholeFolders.has(folder)) continue;
-      const abs = libraryFilePath(libraries, folder);
-      if (abs && all.filter((x) => x.rel_path.startsWith(`${folder}/`)).every((x) => ours.has(x.id))) {
-        wholeFolders.add(folder);
-        out.add(abs);
-        continue;
-      }
+  if (folders) {
+    const foreign = new Set<string>();
+    for (const x of deps.repo.listLiveFiles()) {
+      const folder = topFolderOf(x.rel_path);
+      if (folder && !ours.has(x.id)) foreign.add(folder);
     }
+    for (const f of files) {
+      const folder = topFolderOf(f.rel_path);
+      if (folder && !foreign.has(folder) && libraryFilePath(libraries, folder)) wholeFolders.add(folder);
+    }
+  }
+  const out = new Set<string>();
+  for (const folder of wholeFolders) out.add(libraryFilePath(libraries, folder)!);
+  for (const f of files) {
+    const folder = topFolderOf(f.rel_path);
+    if (folder && wholeFolders.has(folder)) continue;
     for (const p of await fileTargets(deps, f)) out.add(p);
   }
   return [...out];

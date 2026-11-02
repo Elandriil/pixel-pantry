@@ -8,7 +8,15 @@ function recorder() {
   return { cmds, run: async (cmd: string[]) => void cmds.push(cmd) };
 }
 
-test("win32 builds one PowerShell command, quotes doubled, DeleteDirectory for folders", async () => {
+/** The script PowerShell runs: `-EncodedCommand` carries it as base64 UTF-16LE. */
+function decodedScript(cmd: string[]): string {
+  const [exe, ...args] = cmd;
+  expect(exe).toBe("powershell.exe");
+  expect(args.slice(0, -1)).toEqual(["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
+  return Buffer.from(args.at(-1)!, "base64").toString("utf16le");
+}
+
+test("win32 builds one encoded PowerShell command, quotes doubled, DeleteDirectory for folders", async () => {
   const dir = tmpDir();
   const file = join(dir, "Bob's Show", "S01E01.mkv");
   touch(file);
@@ -16,11 +24,8 @@ test("win32 builds one PowerShell command, quotes doubled, DeleteDirectory for f
   const { cmds, run } = recorder();
   await trashPaths([file, folder], run, "win32");
   expect(cmds).toHaveLength(1);
-  const [exe, ...args] = cmds[0]!;
-  expect(exe).toBe("powershell.exe");
-  expect(args.slice(0, -1)).toEqual(["-NoProfile", "-NonInteractive", "-Command"]);
   const esc = (p: string) => p.replaceAll("'", "''");
-  expect(args.at(-1)).toBe(
+  expect(decodedScript(cmds[0]!)).toBe(
     "$ErrorActionPreference = 'Stop'; " +
       "Add-Type -AssemblyName Microsoft.VisualBasic; " +
       `foreach ($p in @('${esc(file)}', '${esc(folder)}')) { ` +
@@ -32,13 +37,28 @@ test("win32 builds one PowerShell command, quotes doubled, DeleteDirectory for f
   );
 });
 
+test("win32: hundreds of long paths stay within one command (no command-line length limit applies to -EncodedCommand)", async () => {
+  const dir = tmpDir();
+  const paths: string[] = [];
+  for (let i = 0; i < 400; i++) {
+    const p = join(dir, "A very long show name that goes on and on", `Season 01`, `Episode ${i} with a long release tag.mkv`);
+    touch(p);
+    paths.push(p);
+  }
+  const { cmds, run } = recorder();
+  await trashPaths(paths, run, "win32");
+  expect(cmds).toHaveLength(1);
+  const script = decodedScript(cmds[0]!);
+  for (const p of paths) expect(script).toContain(`DeleteFile('${p}'`);
+});
+
 test("win32 checks every path's drive before the first delete", async () => {
   const dir = tmpDir();
   const file = join(dir, "a.mkv");
   touch(file);
   const { cmds, run } = recorder();
   await trashPaths([file], run, "win32");
-  const script = cmds[0]!.at(-1)!;
+  const script = decodedScript(cmds[0]!);
   const check = script.indexOf("[System.IO.DriveInfo]::new([System.IO.Path]::GetPathRoot($p))");
   expect(check).toBeGreaterThan(0);
   expect(script).toContain("'Network', 'Removable'");

@@ -5,7 +5,7 @@ import { buildApp } from "../../src/http/app";
 import { OsClient } from "../../src/subtitles/opensubtitles";
 import type { FetchFn } from "../../src/types";
 import { touch } from "../helpers";
-import { makeDeps, request, seedMovie, seedShow } from "./helpers";
+import { makeDeps, request, seedMovie, seedShow, raw } from "./helpers";
 
 const SRT = "1\n00:00:01,000 --> 00:00:02,000\nHello\n";
 
@@ -55,7 +55,7 @@ test("sidecar ids are stable basenames that survive another sidecar appearing", 
   const after = (await request(app, `/api/items/${id}/subtitles`)).json.tracks;
   expect(after.map((t: any) => t.id)).toEqual(["sidecar:Heat.en.srt", "sidecar:Heat.vtt"]);
   expect(after.find((t: any) => t.id === before[0].id)).toEqual(before[0]);
-  expect(await (await app.request(before[0].url)).text()).toBe("WEBVTT\n");
+  expect(await (await raw(app, before[0].url)).text()).toBe("WEBVTT\n");
 });
 
 test("sidecar names with spaces are URL-encoded; unknown or traversal names are 404", async () => {
@@ -69,9 +69,9 @@ test("sidecar names with spaces are URL-encoded; unknown or traversal names are 
   const app = buildApp(deps);
   const [track] = (await request(app, `/api/items/${id}/subtitles`)).json.tracks;
   expect(track).toMatchObject({ id: "sidecar:Heat%201995.en.srt", url: `/api/items/${id}/subtitles/sidecar/Heat%201995.en.srt` });
-  expect(await (await app.request(track.url)).text()).toBe(SRT);
+  expect(await (await raw(app, track.url)).text()).toBe(SRT);
   for (const name of ["..%2Fx.srt", "x.srt", "0", "Heat%201995.en.srt%00"]) {
-    expect((await app.request(`/api/items/${id}/subtitles/sidecar/${name}`)).status).toBe(404);
+    expect((await raw(app, `/api/items/${id}/subtitles/sidecar/${name}`)).status).toBe(404);
   }
 });
 
@@ -91,23 +91,23 @@ test("item detail lists embedded tracks and sidecars", async () => {
 test("sidecar is served with its content type, shifted when ?shift=500", async () => {
   const { id, video, app } = setup();
   writeFileSync(video.replace(".mkv", ".en.srt"), SRT);
-  const plain = await app.request(`/api/items/${id}/subtitles/sidecar/Heat.en.srt`);
+  const plain = await raw(app, `/api/items/${id}/subtitles/sidecar/Heat.en.srt`);
   expect(plain.headers.get("Content-Type")).toStartWith("application/x-subrip");
   expect(await plain.text()).toBe(SRT);
-  const shifted = await app.request(`/api/items/${id}/subtitles/sidecar/Heat.en.srt?shift=500`);
+  const shifted = await raw(app, `/api/items/${id}/subtitles/sidecar/Heat.en.srt?shift=500`);
   expect(await shifted.text()).toBe("1\n00:00:01,500 --> 00:00:02,500\nHello\n");
-  expect((await app.request(`/api/items/${id}/subtitles/sidecar/Heat.vtt`)).status).toBe(404);
-  expect((await app.request(`/api/items/${id}/subtitles/sidecar/Heat.en.srt?shift=abc`)).status).toBe(400);
+  expect((await raw(app, `/api/items/${id}/subtitles/sidecar/Heat.vtt`)).status).toBe(404);
+  expect((await raw(app, `/api/items/${id}/subtitles/sidecar/Heat.en.srt?shift=abc`)).status).toBe(400);
 });
 
 test("a Windows-1252 sidecar is served byte-identical unshifted and decoded when shifted", async () => {
   const { id, video, app } = setup();
   const cp1252 = new Uint8Array([...new TextEncoder().encode("1\n00:00:01,000 --> 00:00:02,000\nDon"), 0x92, 0x74, 0x0a]);
   writeFileSync(video.replace(".mkv", ".en.srt"), cp1252);
-  const plain = await app.request(`/api/items/${id}/subtitles/sidecar/Heat.en.srt`);
+  const plain = await raw(app, `/api/items/${id}/subtitles/sidecar/Heat.en.srt`);
   expect(plain.headers.get("Content-Type")).toBe("application/x-subrip");
   expect(new Uint8Array(await plain.arrayBuffer())).toEqual(cp1252);
-  const shifted = await app.request(`/api/items/${id}/subtitles/sidecar/Heat.en.srt?shift=1000`);
+  const shifted = await raw(app, `/api/items/${id}/subtitles/sidecar/Heat.en.srt?shift=1000`);
   expect(shifted.headers.get("Content-Type")).toBe("application/x-subrip; charset=utf-8");
   expect(await shifted.text()).toBe("1\n00:00:02,000 --> 00:00:03,000\nDon’t\n");
 });

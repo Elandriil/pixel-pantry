@@ -30,6 +30,7 @@
   .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #3a3f47; }
   .badge.on { background: #24713c; }
   .error { color: #ff6b6b; }
+  .pin { font: 600 22px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 4px; vertical-align: middle; }
   .banner { font-weight: 600; background: #3a1d1f; border: 1px solid #b3393b; border-radius: 4px; padding: 8px 12px; margin: 0 0 8px; }
   .note { color: #f0b95a; }
   .muted { color: #8b919a; }
@@ -64,6 +65,8 @@
       <dt>Scan</dt><dd id="st-scan"></dd>
       <dt>Library</dt><dd id="st-counts"></dd>
       <dt>Services</dt><dd><span id="st-tmdb" class="badge">TMDB</span> <span id="st-os" class="badge">OpenSubtitles</span></dd>
+      <dt>TV pairing PIN</dt><dd><span id="st-pin" class="pin"></span> <button type="button" id="pin-reset" class="secondary">Reset pairing</button>
+        <p class="muted" style="margin:4px 0 0">The TV app asks for this PIN once. Resetting gives a new PIN and disconnects every TV until it enters the new one.</p></dd>
     </dl>
   </section>
 
@@ -155,6 +158,7 @@ async function refreshStatus() {
     $("st-tmdb").textContent = "TMDB " + (s.tmdbConfigured ? "configured" : "not configured");
     $("st-os").className = "badge" + (s.opensubtitlesConfigured ? " on" : "");
     $("st-os").textContent = "OpenSubtitles " + (s.opensubtitlesConfigured ? "configured" : "not configured");
+    $("st-pin").textContent = s.pairingPin || "—";
     $("st-error").hidden = !s.lastScanError;
     $("st-error").textContent = s.lastScanError ? "Last scan error: " + s.lastScanError : "";
     $("rescan").disabled = scanning;
@@ -326,6 +330,19 @@ $("rescan").addEventListener("click", async () => {
   $("rescan").disabled = true;
   try { await api("scan", { method: "POST" }); } catch (err) { alert("Rescan failed: " + err.message); }
   refreshStatus();
+});
+
+$("pin-reset").addEventListener("click", async () => {
+  if (!confirm("Reset the TV pairing? Every TV will ask for the new PIN the next time it connects.")) return;
+  $("pin-reset").disabled = true;
+  try {
+    const r = await api("pairing/reset", { method: "POST" });
+    $("st-pin").textContent = r.pairingPin;
+  } catch (err) {
+    alert("Reset failed: " + err.message);
+  } finally {
+    $("pin-reset").disabled = false;
+  }
 });
 
 $("quit").addEventListener("click", async () => {
