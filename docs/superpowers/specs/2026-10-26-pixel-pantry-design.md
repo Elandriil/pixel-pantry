@@ -308,6 +308,9 @@ JSON over HTTP. Rough resource list; the builder designs the details:
 - Audio menu: embedded audio tracks.
 - The last chosen subtitle/audio track per item is remembered on the server
   so resuming later restores it.
+- An audio pick on an episode also sets that track's language for the whole
+  show: every other episode starts in it when its file has a track of that
+  language (added 2026-11-17).
 
 ### History page
 

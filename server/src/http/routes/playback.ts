@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { stat } from "node:fs/promises";
 import { libraryFilePath } from "../../config";
 import type { FileRow } from "../../library/repo";
+import { pickedLanguage } from "../../playback/audio";
 import { listHistory, stats } from "../../playback/history";
 import { reportProgress, setSeasonWatched, setShowWatched, setTrackChoice, setWatched } from "../../playback/progress";
 import { listSidecars } from "../../subtitles/sidecar";
@@ -9,7 +10,7 @@ import type { DeleteResponse, HistoryResponse, ProgressResponse, Settings } from
 import { jsonBody } from "../body";
 import type { Deps } from "../deps";
 import { HttpError } from "../errors";
-import { liveItem, liveShow, parseId, parseJson, toItemSummary } from "./catalog";
+import { audioOf, liveFiles, liveItem, liveShow, parseId, parseJson, toItemSummary } from "./catalog";
 
 const SETTINGS_KEY = "client";
 const DEFAULT_SETTINGS: Settings = { skipBackSeconds: 10, skipForwardSeconds: 10, autoplayNext: true };
@@ -134,6 +135,12 @@ export function playbackRoutes(deps: Deps): Hono {
     const item = liveItem(deps, parseId(c.req.param("id")));
     const b = await jsonBody(c);
     if (!isChoice(b.subtitle) || !isChoice(b.audio)) throw new HttpError(400, "subtitle and audio must be strings or null");
+    // An audio pick on an episode sets its language for the whole show; read before the choice below is stored.
+    if (typeof b.audio === "string" && item.show_id !== null) {
+      const audio = audioOf(deps, item, liveFiles(deps.repo.filesForItem(item.id))[0]);
+      const language = pickedLanguage(audio.tracks, audio.choice, b.audio);
+      if (language !== null) deps.repo.setShowAudioLanguage(item.show_id, language);
+    }
     setTrackChoice(deps.db, item.id, { subtitle: b.subtitle as string | null | undefined, audio: b.audio as string | null | undefined });
     return c.json({ ok: true });
   });

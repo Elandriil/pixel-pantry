@@ -216,3 +216,103 @@ test("delete with the video already gone from disk trashes nothing and still hid
   expect((await request(app, `/api/items/${id}`)).status).toBe(200);
   await deps.scanner.scan();
 });
+
+// --- a show's audio language ---
+
+type AudioSpec = [index: number, language: string | null, isDefault?: boolean];
+
+/** Gives the item's file these audio tracks. */
+function setAudio(deps: ReturnType<typeof setup>["deps"], itemId: number, tracks: AudioSpec[]): void {
+  const file = deps.repo.filesForItem(itemId)[0]!;
+  deps.repo.setFileProbe(file.id, {
+    duration: 1200,
+    audio: tracks.map(([index, language, isDefault]) => ({
+      index, codec: "aac", language, title: null, channels: 2, default: isDefault === true, forced: false,
+    })),
+    subtitles: [],
+  }, null);
+}
+
+/** A show whose episodes all carry an English (default) and a Japanese track. */
+function dualAudioShow(deps: ReturnType<typeof setup>["deps"], episodes = 3) {
+  const s = seedShow(deps.repo, { title: "Frieren", category: "anime", seasons: [Array.from({ length: episodes }, (_, i) => i + 1)] });
+  const eps = s.itemIds[0]!;
+  for (const id of eps) setAudio(deps, id, [[1, "eng", true], [2, "jpn"]]);
+  return eps;
+}
+
+test("an audio pick on one episode makes the show's other episodes start in that language", async () => {
+  const { deps, app } = setup();
+  const [ep1, ep2, ep3] = dualAudioShow(deps) as [number, number, number];
+  // Another release: the tracks the other way round and tagged with two-letter codes.
+  setAudio(deps, ep2, [[1, "ja"], [2, "en", true]]);
+  expect((await request(app, `/api/items/${ep2}`)).json.audioChoice).toBeNull();
+
+  await request(app, `/api/items/${ep1}/tracks`, post({ subtitle: "off", audio: "audio:2" }));
+
+  expect((await request(app, `/api/items/${ep1}`)).json.audioChoice).toBe("audio:2");
+  expect((await request(app, `/api/items/${ep2}`)).json.audioChoice).toBe("audio:1");
+  expect((await request(app, `/api/items/${ep3}`)).json.audioChoice).toBe("audio:2");
+});
+
+test("saving a subtitle choice with the audio track that plays anyway sets no language for the show", async () => {
+  const { deps, app } = setup();
+  const [ep1, ep2] = dualAudioShow(deps) as [number, number];
+  // The TV sends both choices on every save; here only the subtitle changed.
+  await request(app, `/api/items/${ep1}/tracks`, post({ subtitle: "embedded:3", audio: "audio:1" }));
+  setAudio(deps, ep2, [[1, "jpn", true], [2, "eng"]]);
+  expect((await request(app, `/api/items/${ep2}`)).json.audioChoice).toBeNull();
+});
+
+test("an episode without the show's language plays as before and does not change the language", async () => {
+  const { deps, app } = setup();
+  const [ep1, ep2, ep3] = dualAudioShow(deps) as [number, number, number];
+  setAudio(deps, ep2, [[1, "eng", true], [2, "fre"]]);
+  await request(app, `/api/items/${ep1}/tracks`, post({ audio: "audio:2" }));
+
+  expect((await request(app, `/api/items/${ep2}`)).json.audioChoice).toBeNull();
+  // A subtitle save there repeats the English track that plays by default.
+  await request(app, `/api/items/${ep2}/tracks`, post({ subtitle: "off", audio: "audio:1" }));
+  expect((await request(app, `/api/items/${ep2}`)).json.audioChoice).toBe("audio:1");
+  expect((await request(app, `/api/items/${ep3}`)).json.audioChoice).toBe("audio:2");
+});
+
+test("switching back to another language moves the whole show, also episodes with an older choice", async () => {
+  const { deps, app } = setup();
+  const [ep1, ep2, ep3] = dualAudioShow(deps) as [number, number, number];
+  await request(app, `/api/items/${ep1}/tracks`, post({ audio: "audio:2" }));
+  await request(app, `/api/items/${ep2}/tracks`, post({ audio: "audio:1" }));
+
+  expect((await request(app, `/api/items/${ep1}`)).json.audioChoice).toBe("audio:1");
+  expect((await request(app, `/api/items/${ep3}`)).json.audioChoice).toBe("audio:1");
+});
+
+test("among several tracks of the show's language the episode's own pick is kept, else the default one", async () => {
+  const { deps, app } = setup();
+  const [ep1, ep2, ep3] = dualAudioShow(deps) as [number, number, number];
+  for (const id of [ep2, ep3]) setAudio(deps, id, [[1, "eng", true], [2, "jpn"], [3, "jpn", true]]);
+  await request(app, `/api/items/${ep1}/tracks`, post({ audio: "audio:2" }));
+  await request(app, `/api/items/${ep2}/tracks`, post({ audio: "audio:2" }));
+
+  expect((await request(app, `/api/items/${ep2}`)).json.audioChoice).toBe("audio:2");
+  expect((await request(app, `/api/items/${ep3}`)).json.audioChoice).toBe("audio:3");
+});
+
+test("a pick of a track without a language tag stays with that episode", async () => {
+  const { deps, app } = setup();
+  const [ep1, ep2] = dualAudioShow(deps) as [number, number];
+  setAudio(deps, ep1, [[1, "eng", true], [2, null]]);
+  await request(app, `/api/items/${ep1}/tracks`, post({ audio: "audio:2" }));
+
+  expect((await request(app, `/api/items/${ep1}`)).json.audioChoice).toBe("audio:2");
+  expect((await request(app, `/api/items/${ep2}`)).json.audioChoice).toBeNull();
+});
+
+test("a movie's audio pick touches no other item", async () => {
+  const { deps, app } = setup();
+  const a = seedMovie(deps.repo, "Akira");
+  const b = seedMovie(deps.repo, "Paprika");
+  for (const id of [a, b]) setAudio(deps, id, [[1, "eng", true], [2, "jpn"]]);
+  await request(app, `/api/items/${a}/tracks`, post({ audio: "audio:2" }));
+  expect((await request(app, `/api/items/${b}`)).json.audioChoice).toBeNull();
+});

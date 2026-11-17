@@ -34,6 +34,8 @@ export interface ShowRow {
   match_attempted_at: number | null;
   created_at: number | null;
   deleted_at: number | null;
+  /** The audio language picked for the show (`playback/audio.ts`); null until one is picked. */
+  audio_language: string | null;
 }
 
 export interface SeasonRow {
@@ -138,6 +140,7 @@ export class Repo {
       ),
       sessionsMoveItem: p("UPDATE sessions SET item_id = ? WHERE item_id = ?"),
       showGet: p("SELECT * FROM shows WHERE id = ?"),
+      showSetAudioLanguage: p("UPDATE shows SET audio_language = ? WHERE id = ?"),
       showMatchError: p("UPDATE shows SET match_error = ?, match_attempted_at = ? WHERE id = ?"),
       showDeleted: p("UPDATE shows SET deleted_at = ? WHERE id = ?"),
       showList: p("SELECT * FROM shows WHERE deleted_at IS NULL AND (?1 IS NULL OR category = ?1) ORDER BY title COLLATE NOCASE"),
@@ -294,6 +297,10 @@ export class Repo {
 
   getShow(id: number): ShowRow | null {
     return (this.q.showGet!.get(id) as ShowRow | null) ?? null;
+  }
+
+  setShowAudioLanguage(id: number, language: string | null): void {
+    this.q.showSetAudioLanguage!.run(language, id);
   }
 
   /** The oldest show of `category` with this TMDB id (hidden or not): the one duplicates merge into. */

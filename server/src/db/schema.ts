@@ -95,7 +95,10 @@ CREATE TABLE match_overrides (parsed_key TEXT PRIMARY KEY, item_type TEXT, tmdb_
 CREATE TABLE tmdb_cache (key TEXT PRIMARY KEY, json TEXT, fetched_at INT);
 `;
 
-const MIGRATIONS: string[] = [V1];
+/** The audio language picked for a show (ISO 639-1 where known), see `playback/audio.ts`. */
+const V2 = "ALTER TABLE shows ADD COLUMN audio_language TEXT;";
+
+const MIGRATIONS: string[] = [V1, V2];
 
 export function migrate(db: Database): void {
   db.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");

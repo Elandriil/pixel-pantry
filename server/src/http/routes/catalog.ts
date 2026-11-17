@@ -5,6 +5,7 @@ import { libraryFilePath } from "../../config";
 import type { Track } from "../../library/probe";
 import type { FileRow, ItemRow, ShowRow } from "../../library/repo";
 import { imageUrl } from "../../metadata/images";
+import { audioChoiceFor } from "../../playback/audio";
 import { continueWatching, getPlayback } from "../../playback/progress";
 import { listSidecars, type SidecarTrack } from "../../subtitles/sidecar";
 import type {
@@ -231,6 +232,17 @@ export async function subtitleTracks(deps: Deps, itemId: number, file: FileRow):
   return [...embeddedTracks(file), ...sidecars.map((t) => sidecarTrack(itemId, t))];
 }
 
+/**
+ * The audio tracks of `file` and the audio choice to report for `item`: its stored one, or for an episode of a
+ * show with an audio language the track of that language (`playback/audio.ts`).
+ */
+export function audioOf(deps: Deps, item: ItemRow, file: FileRow | undefined): { tracks: Track[]; choice: string | null } {
+  const tracks = parseJson<Track[]>(file?.audio_tracks ?? null, []);
+  const stored = getPlayback(deps.db, item.id)?.audio_choice ?? null;
+  const language = item.show_id !== null ? (deps.repo.getShow(item.show_id)?.audio_language ?? null) : null;
+  return { tracks, choice: audioChoiceFor(tracks, stored, language) };
+}
+
 async function itemDetail(deps: Deps, item: ItemRow): Promise<ItemDetail> {
   const show = item.show_id !== null ? liveShow(deps, item.show_id) : null;
   const file = liveFiles(deps.repo.filesForItem(item.id))[0];
@@ -247,17 +259,18 @@ async function itemDetail(deps: Deps, item: ItemRow): Promise<ItemDetail> {
 
   const subtitles = await subtitleTracks(deps, item.id, file);
   const p = getPlayback(deps.db, item.id);
+  const audio = audioOf(deps, item, file);
   return {
     item: toItemSummary(deps, item, show),
     streamUrl: `/api/items/${item.id}/stream`,
     fileName: basename(file.rel_path),
     fileSize: file.size ?? 0,
-    audio: parseJson<Track[]>(file.audio_tracks, []),
+    audio: audio.tracks,
     subtitles,
     next,
     prev,
     subtitleChoice: p?.subtitle_choice ?? null,
-    audioChoice: p?.audio_choice ?? null,
+    audioChoice: audio.choice,
   };
 }
 
